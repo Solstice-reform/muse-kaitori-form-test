@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MUSE 買取入力 v6.1（プレビュー）</title>
+<style>
+  :root{
+    /* 紙とはんこ: 背景=自社伝票のクリーム紙 / 墨 / 常磐緑(屋号) / 朱肉(警告のみ) */
+    --paper:#F3EFE7; --card:#FFFFFF; --ink:#20303F; --ink2:#6B7280; --rule:#DFD8C8;
+    --tokiwa:#0E6B52; --tokiwa-d:#0A523F; --tokiwa-bg:#E4F0EA; --tokiwa-line:#B9D8CB;
+    --shu:#B23B2E; --shu-bg:#F9E9E6;
+    --ocr:#8C4A1E; --ocr-bg:#F6E9DA; --ocr-line:#E3C39F;
+    --form-bg:#FBF4DC; --form-line:#E4D18F;
+    --r:14px;
+  }
+
+  .ic{width:1.1em;height:1.1em;vertical-align:-0.18em;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;}
+  .ic.spin{animation:icsp 1s linear infinite;}
+  @keyframes icsp{to{transform:rotate(360deg)}}
+  .ocrnotes{background:var(--ocr-bg);border:1px solid var(--ocr-line);border-radius:10px;padding:10px 12px;font-size:12px;color:var(--ocr);margin-bottom:10px;display:none;}
+  .ocrnotes .ln{display:flex;gap:8px;align-items:flex-start;margin:3px 0;}
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html{scroll-behavior:smooth;}
+  @media (prefers-reduced-motion:reduce){ html{scroll-behavior:auto;} *{transition:none!important;} }
+  body{margin:0; background:var(--paper); color:var(--ink); line-height:1.6; padding:0 0 108px;
+    font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",YuGothic,Meiryo,sans-serif;
+    background-image:linear-gradient(transparent 31px, rgba(32,48,63,.035) 32px);
+    background-size:100% 32px;}
+  .wrap{max-width:600px; margin:0 auto; padding:0 14px;}
+
+  /* ===== ヘッダー: 帳場の看板 ===== */
+  header.app{background:var(--ink); color:#F3EFE7; padding:13px 16px; position:sticky; top:0; z-index:10;
+    display:flex; align-items:baseline; gap:10px; border-bottom:3px solid var(--tokiwa);}
+  header.app .mark{font-size:17px;}
+  header.app .ttl{font-size:16px; font-weight:800; letter-spacing:.14em;}
+  header.app .sub{font-size:10.5px; color:#9FB0A8; letter-spacing:.06em; margin-left:auto;}
+
+  /* ===== 工程カード ===== */
+  .card{background:var(--card); border-radius:var(--r); padding:16px 15px 15px; margin:16px 0;
+    box-shadow:0 1px 2px rgba(32,48,63,.05), 0 4px 14px rgba(32,48,63,.05); border:1px solid rgba(223,216,200,.6);}
+  .step{display:flex; align-items:baseline; gap:9px; margin:0 0 13px; border-bottom:1px solid var(--rule); padding-bottom:9px;}
+  .step .no{font-size:11px; font-weight:800; color:var(--tokiwa); letter-spacing:.22em; font-variant-numeric:tabular-nums;}
+  .step h2{font-size:15.5px; margin:0; font-weight:800; letter-spacing:.1em;}
+  .step .hint{font-weight:500; font-size:11px; color:var(--ink2); margin-left:auto; letter-spacing:0;}
+
+  /* ===== 工程01: 撮影行 ===== */
+  .docrow{border:1px solid var(--rule); border-radius:11px; padding:10px 11px; margin-bottom:9px; background:#FDFCF9;}
+  .dochead{display:flex; align-items:center; gap:8px;}
+  .doclbl{font-size:13.5px; font-weight:700; letter-spacing:.04em;}
+  .doclbl .req{font-size:10px; color:var(--shu); font-weight:700; margin-left:2px;}
+  .chip{font-size:10.5px; font-weight:700; padding:2px 9px; border-radius:20px; background:#EEEAE0; color:var(--ink2); letter-spacing:.04em;}
+  .chip.on{background:var(--tokiwa-bg); color:var(--tokiwa-d); border:1px solid var(--tokiwa-line);}
+  .docbtns{margin-left:auto; display:flex; gap:7px;}
+  .docbtns button{width:46px; height:40px; border:1.5px solid var(--rule); border-radius:9px; background:#fff;
+    font-size:17px; cursor:pointer; display:flex; align-items:center; justify-content:center; color:var(--ink);}
+  .docbtns button:active{background:var(--tokiwa-bg); border-color:var(--tokiwa);}
+  .thumbs{display:flex; gap:8px; flex-wrap:wrap; margin-top:9px;}
+  .thumbs:empty{margin-top:0;}
+  .thumbs .th{position:relative;}
+  .thumbs img{width:72px; height:72px; object-fit:cover; border-radius:8px; border:1px solid var(--rule); display:block;}
+  .thumbs .del{position:absolute; top:-7px; right:-7px; width:22px; height:22px; border-radius:50%; border:2px solid #fff;
+    background:var(--shu); color:#fff; font-size:11px; line-height:1; cursor:pointer;}
+
+  .ocrbar{margin-top:11px;}
+  .ocrbar button{width:100%; padding:14px; border:0; border-radius:11px; background:var(--ink); color:#F3EFE7;
+    font-size:14.5px; font-weight:800; letter-spacing:.05em; cursor:pointer; font-family:inherit;}
+  .ocrbar button:disabled{background:#C9C3B6; color:#fff;}
+  .ocrbar button:focus-visible{outline:3px solid var(--tokiwa); outline-offset:2px;}
+  .ocrnote{font-size:11px; color:var(--ink2); margin-top:6px; text-align:center;}
+
+  /* ===== 入力部品 ===== */
+  label.field{display:block; margin:0 0 12px;} label.field:last-child{margin-bottom:0;}
+  label.field .lbl{display:block; font-size:12.5px; font-weight:700; margin-bottom:5px; letter-spacing:.03em;}
+  .opt{color:var(--ink2); font-size:10.5px; margin-left:4px; font-weight:500;}
+  input, select{width:100%; padding:11px 11px; font-size:16px; border:1.5px solid var(--rule); border-radius:9px;
+    background:#fff; color:var(--ink); font-family:inherit; appearance:none;}
+  input:focus, select:focus{outline:none; border-color:var(--tokiwa); box-shadow:0 0 0 3px var(--tokiwa-bg);}
+  select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236B7280' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat:no-repeat; background-position:right 12px center; padding-right:32px;}
+  .grid{display:grid; gap:10px;} .g1{grid-template-columns:1fr;} .g2{grid-template-columns:1fr 1fr;}
+  .sub{font-size:11px; font-weight:700; color:var(--ink2); margin:0 0 4px; letter-spacing:.03em;}
+  .autohint{color:var(--tokiwa-d); font-weight:700; font-size:10px;}
+
+  .note{border-radius:10px; padding:10px 12px; font-size:12px; display:flex; gap:9px; align-items:flex-start; margin:11px 0 0;}
+  .note.ocr{background:var(--ocr-bg); border:1px solid var(--ocr-line); color:var(--ocr);}
+  .note.warn{background:var(--shu-bg); border:1px solid #E5B0A8; color:#7E2A1F;}
+  .note b{font-weight:800;}
+  .convbox{background:var(--tokiwa-bg); border:1px solid var(--tokiwa-line); border-radius:9px; padding:9px 12px;
+    font-size:12px; color:var(--tokiwa-d); margin-top:11px;}
+  .convbox b{font-weight:800;}
+
+  /* ===== 本人確認(折りたたみ) ===== */
+  details.pbox{border:1px solid var(--rule); border-radius:11px; padding:11px 13px; background:#FDFCF9;}
+  details.pbox summary{cursor:pointer; font-size:13.5px; font-weight:700; list-style:none; display:flex; align-items:center; gap:8px;}
+  details.pbox summary::-webkit-details-marker{display:none;}
+  details.pbox summary::before{content:'▸'; color:var(--tokiwa); transition:transform .15s;}
+  details.pbox[open] summary::before{transform:rotate(90deg);}
+  .pgrid{display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-top:12px;}
+  .psum-ok{color:var(--tokiwa-d);} .psum-warn{color:var(--ocr);}
+  .mismatch{background:var(--shu-bg); border:1.5px solid #DE9186; border-radius:10px; padding:11px 13px;
+    font-size:12.5px; color:#7E2A1F; margin-bottom:10px; display:none;}
+
+  /* ===== 品物 ===== */
+  .item{border:1px solid var(--rule); border-radius:12px; padding:12px; margin-bottom:11px; background:#FDFCF9;}
+  .item .ihead{display:flex; align-items:center; gap:8px; margin-bottom:10px;}
+  .item .ino{width:25px; height:25px; border-radius:7px; background:var(--ink); color:#F3EFE7; font-size:12px;
+    font-weight:800; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; font-variant-numeric:tabular-nums;}
+  .item .del{margin-left:auto; background:none; border:none; color:var(--shu); font-size:18px; cursor:pointer; padding:4px 6px;}
+  .pf{font-size:12.5px; font-weight:800; text-align:right; margin-top:7px; color:var(--tokiwa-d); font-variant-numeric:tabular-nums;}
+  .pf.minus{color:var(--shu);}
+  .addrow{width:100%; padding:13px; background:var(--tokiwa-bg); color:var(--tokiwa-d); border:1.5px dashed var(--tokiwa);
+    border-radius:10px; font-size:14px; font-weight:800; cursor:pointer; font-family:inherit; letter-spacing:.05em;}
+  .totals{display:flex; gap:16px; justify-content:flex-end; margin-top:12px; font-size:12.5px; flex-wrap:wrap; color:var(--ink2);}
+  .totals b{font-size:14.5px; color:var(--ink); font-variant-numeric:tabular-nums;} .totals .minus{color:var(--shu);}
+
+  /* ===== 署名要素: 精算バー(粗利ライブ+送信) ===== */
+  .payline{position:fixed; bottom:0; left:0; right:0; z-index:20;
+    background:linear-gradient(transparent, rgba(243,239,231,.94) 26%);
+    padding:18px 14px 14px;}
+  .payline .inr{max-width:600px; margin:0 auto; background:var(--ink); border-radius:15px; padding:11px 12px 11px 17px;
+    display:flex; align-items:center; gap:12px; box-shadow:0 8px 26px rgba(32,48,63,.32); border-top:3px solid var(--tokiwa);}
+  .payline .fig{color:#F3EFE7; line-height:1.25; min-width:0;}
+  .payline .fig .cap{font-size:9.5px; color:#9FB0A8; letter-spacing:.24em; font-weight:700;}
+  .payline .fig .amt{font-size:21px; font-weight:800; font-variant-numeric:tabular-nums; letter-spacing:.01em; white-space:nowrap;}
+  .payline .fig .amt.minus{color:#F0A196;}
+  .payline .fig .cnt{font-size:10.5px; color:#9FB0A8; font-variant-numeric:tabular-nums;}
+  .payline button.go{margin-left:auto; padding:13px 26px; font-size:15.5px; font-weight:800; letter-spacing:.12em;
+    background:var(--tokiwa); color:#fff; border:none; border-radius:11px; cursor:pointer; font-family:inherit; flex-shrink:0;}
+  .payline button.go:active{background:var(--tokiwa-d);}
+  .payline button.go:focus-visible{outline:3px solid #fff; outline-offset:2px;}
+  .payline button.go:disabled{background:#57685F;}
+  .resendln{display:block; text-align:center; margin-top:8px; font-size:11.5px; color:var(--ink2);
+    background:none; border:none; text-decoration:underline; cursor:pointer; width:100%; font-family:inherit;}
+
+  /* ===== 結果プレビュー ===== */
+  #result{display:none;} #result.show{display:block;}
+  .legend{display:flex; gap:14px; flex-wrap:wrap; font-size:11px; margin:10px 0 0;}
+  .legend span{display:inline-flex; align-items:center; gap:5px; color:var(--ink2);}
+  .dot{width:11px; height:11px; border-radius:3px;}
+  .dot.f{background:var(--form-bg); border:1px solid var(--form-line);}
+  .dot.o{background:var(--ocr-bg); border:1px solid var(--ocr-line);}
+  .dot.a{background:var(--tokiwa-bg); border:1px solid var(--tokiwa-line);}
+  .out{margin:14px 0; border:1px solid var(--rule); border-radius:12px; overflow:hidden; background:#fff;}
+  .out .oh{background:var(--ink); color:#F3EFE7; padding:10px 13px; font-size:13px; font-weight:700; display:flex; align-items:center; gap:8px;}
+  .out .oh .n{background:var(--tokiwa); width:20px; height:20px; border-radius:6px; display:inline-flex; align-items:center; justify-content:center; font-size:11px;}
+  .otbl{overflow-x:auto;} .otbl table{border-collapse:collapse; min-width:100%; font-size:12px;}
+  .otbl th{background:#F6F3EC; color:var(--ink2); padding:7px 9px; text-align:left; white-space:nowrap; border-bottom:1px solid var(--rule); font-size:11px;}
+  .otbl td{padding:7px 9px; border-bottom:1px solid #F1EDE3; white-space:nowrap; font-variant-numeric:tabular-nums;}
+  .otbl td.f{background:var(--form-bg);} .otbl td.o{background:var(--ocr-bg);} .otbl td.a{background:var(--tokiwa-bg); color:var(--tokiwa-d); font-weight:700;}
+  .kv{display:grid; grid-template-columns:40% 60%;}
+  .kv>div{padding:8px 12px; font-size:13px; border-top:1px solid var(--rule); word-break:break-all;}
+  .kv .k{color:var(--ink2); background:#FAF8F2; font-weight:700;}
+  .kv .v.f{background:var(--form-bg);} .kv .v.o{background:var(--ocr-bg);} .kv .v.a{background:var(--tokiwa-bg); color:var(--tokiwa-d); font-weight:700;}
+  .slacknote{font-size:12px; color:var(--ink2); padding:9px 13px; background:#FAF8F2;}
+  .slackbox{background:var(--ink); color:#E7EDE9; font-size:12px; padding:13px; border-radius:8px; margin:10px 13px 13px;
+    font-family:"SF Mono",Consolas,monospace; line-height:1.7; white-space:pre-wrap;}
+  pre.json{background:#16222D; color:#CBE6DA; border-radius:8px; padding:12px; font-size:11px; overflow:auto; line-height:1.5;
+    margin:10px 13px 13px; white-space:pre-wrap; word-break:break-all; font-family:ui-monospace,Menlo,monospace;}
+  .reset{display:block; width:100%; padding:12px; margin-top:8px; background:#fff; color:var(--ink2);
+    border:1.5px solid var(--rule); border-radius:10px; font-size:14px; font-weight:700; cursor:pointer; font-family:inherit;}
+
+.mdl-bg{position:fixed;inset:0;background:rgba(32,48,63,.55);display:flex;align-items:center;justify-content:center;z-index:99;padding:16px;}
+.mdl{background:#fff;border-radius:14px;max-width:420px;width:100%;padding:18px;box-shadow:0 12px 40px rgba(0,0,0,.25);}
+.mdl h4{margin:0 0 10px;font-size:15px;}
+.mdl pre{white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.7;margin:0 0 14px;color:#333;}
+.mdl .sim{background:var(--form-bg);border:1px solid var(--form-line);border-radius:8px;padding:8px 10px;font-size:11.5px;color:#7a5a00;margin-bottom:12px;}
+.mdl button{width:100%;padding:11px;border:0;border-radius:9px;background:var(--tokiwa);color:#fff;font-size:14px;font-weight:700;font-family:inherit;}
+</style>
+</head>
+<body>
+<header class="app">
+  <span class="mark"><svg class="ic" viewBox="0 0 24 24" style="width:1.25em;height:1.25em;"><path d="M12 10.5V21M8 21h8"/><path d="M4.5 8.5 19 5l-4.6 5.8z" fill="currentColor" stroke="none"/></svg></span>
+  <span class="ttl">買取かざみどり</span>
+  <span class="sub">プレビュー v6.1・実サンプル入力済み</span>
+</header>
+
+<div class="wrap">
+  <div class="note warn" style="margin:14px 0 0;"><span><svg class="ic" viewBox="0 0 24 24" style="margin-top:2px;"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
+    <div><b>実サンプル（2026/7/8 湯河原・小松様の取引）を入力済み。</b>実顧客情報を含むため、このプレビューファイルは社外共有しないでください。読取・送信は模擬動作します（実通信なし）。</div>
+  </div>
+  <div id="form">
+
+    <!-- 工程01 撮る -->
+    <div class="card">
+      <div class="step"><span class="no">工程 01</span><h2>撮る</h2><span class="hint">書類と品物をここに集約</span></div>
+
+      <div class="docrow">
+        <div class="dochead"><span class="doclbl">買取伝票</span><span class="chip" id="chip_denpyo">未添付</span>
+          <span class="docbtns">
+            <button type="button" onclick="pick('denpyo',true)" aria-label="伝票をカメラで撮影"><svg class="ic" viewBox="0 0 24 24"><path d="M3 8.5A1.5 1.5 0 0 1 4.5 7H7l2-3h6l2 3h2.5A1.5 1.5 0 0 1 21 8.5V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="13.2" r="3.4"/></svg></button>
+            <button type="button" onclick="pick('denpyo',false)" aria-label="伝票を写真から選択"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.6" cy="9.6" r="1.7"/><path d="M4 17l5-5 4 4 3-3 4 4"/></svg></button>
+          </span></div>
+        <div class="thumbs" id="th_denpyo"></div>
+        <input type="file" id="file_denpyo_cam" accept="image/*" capture="environment" hidden onchange="onPick(event,'denpyo')">
+        <input type="file" id="file_denpyo_lib" accept="image/*" hidden onchange="onPick(event,'denpyo')">
+      </div>
+
+      <div class="docrow">
+        <div class="dochead"><span class="doclbl">身分証<span class="opt">免許証・マイナンバーカード等</span></span><span class="chip" id="chip_license">未添付</span>
+          <span class="docbtns">
+            <button type="button" onclick="pick('license',true)" aria-label="身分証をカメラで撮影"><svg class="ic" viewBox="0 0 24 24"><path d="M3 8.5A1.5 1.5 0 0 1 4.5 7H7l2-3h6l2 3h2.5A1.5 1.5 0 0 1 21 8.5V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="13.2" r="3.4"/></svg></button>
+            <button type="button" onclick="pick('license',false)" aria-label="身分証を写真から選択"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.6" cy="9.6" r="1.7"/><path d="M4 17l5-5 4 4 3-3 4 4"/></svg></button>
+          </span></div>
+        <div class="thumbs" id="th_license"></div>
+        <input type="file" id="file_license_cam" accept="image/*" capture="environment" hidden onchange="onPick(event,'license')">
+        <input type="file" id="file_license_lib" accept="image/*" hidden onchange="onPick(event,'license')">
+      </div>
+
+      <div class="docrow">
+        <div class="dochead"><span class="doclbl">商品画像<span class="opt">最大3枚</span></span><span class="chip" id="chip_items">未添付</span>
+          <span class="docbtns">
+            <button type="button" onclick="pick('items',true)" aria-label="商品をカメラで撮影"><svg class="ic" viewBox="0 0 24 24"><path d="M3 8.5A1.5 1.5 0 0 1 4.5 7H7l2-3h6l2 3h2.5A1.5 1.5 0 0 1 21 8.5V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="13.2" r="3.4"/></svg></button>
+            <button type="button" onclick="pick('items',false)" aria-label="商品を写真から選択"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.6" cy="9.6" r="1.7"/><path d="M4 17l5-5 4 4 3-3 4 4"/></svg></button>
+          </span></div>
+        <div class="thumbs" id="th_items"></div>
+        <input type="file" id="file_items_cam" accept="image/*" capture="environment" hidden onchange="onPick(event,'items')">
+        <input type="file" id="file_items_lib" accept="image/*" multiple hidden onchange="onPick(event,'items')">
+      </div>
+
+      <div class="ocrbar">
+        <button id="ocrBtn" onclick="runOcr()" disabled><svg class="ic" viewBox="0 0 24 24"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16M4 12h16"/></svg> 画像を添付すると読取できます</button>
+        <div class="ocrnote">伝票・身分証どちらか1枚だけでも読取できます。2枚まとめてなら氏名の突合チェック付き。</div>
+      </div>
+    </div>
+
+    <!-- 工程02 取引 -->
+    <div class="card">
+      <div class="step"><span class="no">工程 02</span><h2>取引</h2><span class="hint">読取で自動入力・修正可</span></div>
+      <div class="grid g2">
+        <label class="field"><span class="lbl">担当（バイヤー）</span>
+          <select id="buyer">
+            <option value="" selected>選択してください</option>
+            <option>八嶋真司</option><option>筒井涼介</option><option>藤原慶俊</option><option>袖井貢</option><option>原田峰行</option>
+          </select></label>
+        <label class="field"><span class="lbl">現場名</span>
+          <input id="genba" value="" placeholder="例：湯河原"></label>
+      </div>
+      <div class="grid g2" style="margin-top:10px;">
+        <label class="field"><span class="lbl">きっかけ</span>
+          <select id="channel" onchange="updateConv()">
+            <option value="" selected>選択してください</option>
+            <option>折込</option><option>ポスティング</option><option>声掛</option>
+            <option>紹介</option><option>看板</option><option>再来</option><option>その他</option>
+          </select></label>
+        <label class="field"><span class="lbl">対応方法<span class="opt">必ず確認</span></span>
+          <select id="taiou">
+            <option selected>催事</option><option>出張</option>
+          </select></label>
+      </div>
+      <div class="note warn"><span><svg class="ic" viewBox="0 0 24 24" style="margin-top:2px;"><path d="M12 3.5 2.5 20h19z"/><path d="M12 9.5v5M12 17.4v.01"/></svg></span>
+        <div>訪問購入のときは必ず<b>「出張」に切替</b>。催事のまま送ると台帳の対応方法が誤記録になります。</div>
+      </div>
+      <div class="convbox" id="conv"></div>
+    </div>
+
+    <!-- 工程03 本人確認 -->
+    <div class="card">
+      <div class="step"><span class="no">工程 03</span><h2>本人確認</h2><span class="hint">読取で自動入力・要目視確認</span></div>
+      <div class="mismatch" id="mismatchBox"></div>
+      <div class="ocrnotes" id="ocrNotes"></div>
+      <details class="pbox" id="personBox">
+        <summary><span id="personSum">本人確認の入力内容（タップで開く・読取後は自動入力済み）</span></summary>
+        <div class="pgrid">
+          <label class="field"><span class="lbl">氏名 <span class="opt" style="color:var(--shu);">必須</span></span><input id="p_name" placeholder="例：山田　太郎"></label>
+          <label class="field"><span class="lbl">郵便番号</span><input id="p_zip" inputmode="numeric" placeholder="例：259-0301"></label>
+          <label class="field"><span class="lbl">丁目番地号</span><input id="p_banchi" placeholder="例：4-21-13 建物名"></label>
+          <label class="field"><span class="lbl">生年月日（和暦）</span><input id="p_birth" placeholder="例：昭和24年10月16日"></label>
+          <label class="field"><span class="lbl">職業</span>
+            <select id="p_shokugyo"><option value=""></option><option>会社員</option><option>自営業</option><option>主婦</option><option>なし</option><option>その他</option></select></label>
+          <label class="field"><span class="lbl">確認の方法</span>
+            <select id="p_method"><option selected>免許証</option><option>保険証</option><option>マイナンバーカード</option><option>運転経歴書</option><option>在留カード</option><option>その他</option><option>無し</option></select></label>
+          <label class="field" style="grid-column:1/-1;"><span class="lbl">番号<span class="opt">免許証番号など。マイナンバーは記録禁止のため空欄</span></span><input id="p_num" placeholder="例：0000 0000 0000"></label>
+          <div style="grid-column:1/-1;font-size:11px;color:var(--ink2);" id="p_addr_note"></div>
+        </div>
+      </details>
+    </div>
+
+    <!-- 工程04 品物 -->
+    <div class="card">
+      <div class="step"><span class="no">工程 04</span><h2>品物</h2><span class="hint">ジャンルで欄が変化・何点でも</span></div>
+      <div id="items"></div>
+      <button class="addrow" onclick="addItem()">＋ 品物を追加</button>
+      <div class="totals">
+        <span>上代計 <b id="tJ">¥0</b></span><span>下代計 <b id="tG">¥0</b></span><span>粗利計 <b id="tP">¥0</b></span>
+      </div>
+    </div>
+
+    <!-- 補足 -->
+    <div class="card">
+      <div class="step"><span class="no">補足</span><h2>販促・備考</h2><span class="hint">任意</span></div>
+      <div class="grid g2">
+        <label class="field"><span class="lbl">販促品</span><input id="promo" placeholder="例：リピクーポン"></label>
+        <label class="field"><span class="lbl">備考</span><input id="biko" placeholder=""></label>
+      </div>
+    </div>
+  </div>
+
+  <!-- 結果 -->
+  <div id="result">
+    <div class="card" style="background:var(--tokiwa-bg); border-color:var(--tokiwa-line);">
+      <div class="step" style="border-color:var(--tokiwa-line);"><span class="no">確認</span><h2 style="color:var(--tokiwa-d);">各シートへの反映</h2></div>
+      <p style="font-size:13px; margin:0; color:var(--tokiwa-d);">この内容がGASへ送られ、4帳簿＋Slackへ展開されます。</p>
+      <div class="legend"><span><i class="dot f"></i>フォーム入力</span><span><i class="dot o"></i>写真読取</span><span><i class="dot a"></i>自動</span></div>
+    </div>
+    <div id="outputs"></div>
+    <button class="reset" onclick="resetDemo()"><svg class="ic" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v4h-4"/></svg> 次の買取を入力する</button>
+  </div>
+</div>
+
+<!-- 精算バー: 粗利ライブ＋送信 -->
+<div class="payline" id="submitBar"><div class="inr">
+  <div class="fig">
+    <div class="cap">粗利計</div>
+    <div class="amt" id="sbP">¥0</div>
+    <div class="cnt" id="sbN">0点</div>
+  </div>
+  <button class="go" onclick="submitReal()">送信する</button>
+</div>
+<button class="resendln" onclick="resendQueue()"><svg class="ic" viewBox="0 0 24 24"><path d="M5 9a10 10 0 0 1 14 0M8 12.5a6 6 0 0 1 8 0"/><circle cx="12" cy="17" r="1.4"/><path d="M12 18.4V21"/></svg> 圏外時の保留分を再送する</button>
+</div>
+
+<script>
+
+// ===== SVGアイコン =====
+const IC = {
+  camera:'<svg class="ic" viewBox="0 0 24 24"><path d="M3 8.5A1.5 1.5 0 0 1 4.5 7H7l2-3h6l2 3h2.5A1.5 1.5 0 0 1 21 8.5V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="13.2" r="3.4"/></svg>',
+  photo:'<svg class="ic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.6" cy="9.6" r="1.7"/><path d="M4 17l5-5 4 4 3-3 4 4"/></svg>',
+  close:'<svg class="ic" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  scan:'<svg class="ic" viewBox="0 0 24 24"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16M4 12h16"/></svg>',
+  spin:'<svg class="ic spin" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/></svg>',
+  warn:'<svg class="ic" viewBox="0 0 24 24"><path d="M12 3.5 2.5 20h19z"/><path d="M12 9.5v5M12 17.4v.01"/></svg>',
+  info:'<svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.6v.01"/></svg>',
+  wave:'<svg class="ic" viewBox="0 0 24 24"><path d="M5 9a10 10 0 0 1 14 0M8 12.5a6 6 0 0 1 8 0"/><circle cx="12" cy="17" r="1.4"/><path d="M12 18.4V21"/></svg>',
+  reset:'<svg class="ic" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v4h-4"/></svg>',
+  check:'<svg class="ic" viewBox="0 0 24 24"><path d="M4 12.5l5 5L20 6.5"/></svg>'
+};
+
+// ===== マスタ（管理マスターv1.1と一致） =====
+const GENRES=["貴金属","宝石","バッグ","小物","時計","カメラ","金券類","古銭","お酒","その他"];
+const BRANDS=["","Lv","CHANEL","Burberry","BVLGARI","Cartier","CELINE","CITIZEN","COACH","Dior","dunhill","Enicar","FENDI","Ferragamo","GIVENCHY","GUCCI","HERMES","Longines","miu miu","OMEGA","POLO RALPH LAUREN","PRADA","RADO","ROLEX","SAINT LAURENT","SEIKO","Swarovski","TAG Heuer","Tiffani&Co.","Vivienne Westwood","Chloe","DIESEL","VALENTINO"];
+const LINES=["","モノグラム","ダミエ","エピ","ヴェルニ","モノグラム アンプラント","マヒナ","タイガ","スハリ","モノグラム マカサー","モノグラム デニム","モノグラムミニ","モノグラムマルチカラー"];
+const TELECA_DO=["50度数","105度数","その他度数"];
+const KOSEN=["","100円銀貨","1,000円銀貨","50銭　旭竜銀貨","50銭　竜銀貨","50銭　旭日銀貨","50銭　小丸鳳凰銀貨","20銭　旭竜銀貨","20銭　竜銀貨","20銭　旭日銀貨","10銭　旭竜銀貨","10銭　竜銀貨","10銭　旭日銀貨","天保通宝","1円銀貨","1964年ケネディー1/2ドル","1965-1969年ケネディー1/2ドル"];
+const OROSHI=["グランチャ","グランチャ宝石","貴金属","田村敏男","ブランドＫ","チケッティ","ワタル","ウルトラカメラ","エルミタージュ","STYLE","オークション","色石BANK","タグ無し"];
+const GENRE_OROSHI={ "貴金属":"貴金属", "カメラ":"ウルトラカメラ", "金券類":"チケッティ", "古銭":"ワタル" };
+const TELECA_UNIT={ "50度数":400, "105度数":800 };
+const KIKINZOKU_RATE=0.9;
+const LAYOUT={
+  "貴金属":{weight:true,itemname:true}, "宝石":{weight:true,itemname:true},
+  "バッグ":{brand:true,line:true,itemname:true}, "小物":{brand:true,line:true,itemname:true},
+  "時計":{brand:true,itemname:true}, "カメラ":{itemname:true}, "金券類":{kinken:true},
+  "古銭":{kosen:true,itemname:true}, "お酒":{itemname:true}, "その他":{itemname:true}
+};
+const CHANNEL_TO_ROUTE={ "折込":"【折込】新規","ポスティング":"【ポス】新規","声掛":"【キャッチ】新規","紹介":"紹介","看板":"看板","再来":"今週リピーター","その他":"" };
+const CHANNEL_TO_NYURYU={ "折込":"折込","ポスティング":"ポス","声掛":"声掛","紹介":"紹介","看板":"看板","再来":"再来","その他":"その他" };
+const PREFIX={ "八嶋真司":"YS","筒井涼介":"TR","藤原慶俊":"FK","袖井貢":"MS","原田峰行":"HT" };
+
+// 本人確認データ（読取で自動入力→手修正欄から反映）
+const OCR={ name:"", sex:"", zip:"", addr:"", banchi:"", birth:"", method:"免許証", shokugyo:"", num:"" };
+function readPersonInputs(){
+  OCR.name=val('p_name'); OCR.zip=val('p_zip'); OCR.banchi=val('p_banchi');
+  OCR.birth=val('p_birth'); OCR.method=val('p_method'); OCR.shokugyo=val('p_shokugyo'); OCR.num=val('p_num');
+  OCR.addr='';  // 都道府県〜町域は台帳側で郵便番号から自動補完（AD列ARRAYFORMULA）
+}
+
+function opt(a,s){return a.map(v=>`<option ${v===s?'selected':''}>${v}</option>`).join("");}
+function updateConv(){
+  const c=val('channel');
+  if(!c){ document.getElementById('conv').innerHTML='きっかけを選ぶと経路・流入の変換を表示します'; return; }
+  const r=CHANNEL_TO_ROUTE[c], n=CHANNEL_TO_NYURYU[c];
+  document.getElementById('conv').innerHTML=`自動変換 → 経路（伝票）：<b>${r||'（空）※査定件数集計に載りません'}</b> ／ 流入（台帳）：<b>${n}</b>`;
+}
+
+// ===== 品物行 =====
+let seq=0;
+function addItem(preset){
+  preset=preset||{genre:"金券類"};
+  const id=++seq;
+  const w=document.createElement("div");
+  w.className="item"; w.dataset.id=id;
+  w.innerHTML=`
+    <div class="ihead"><span class="ino"></span>
+      <select class="genre" style="max-width:150px" onchange="renderFields(${id})">${opt(GENRES,preset.genre)}</select>
+      <select class="oroshi" style="max-width:150px">${opt(OROSHI,preset.oroshi||"チケッティ")}</select>
+      <button class="del" onclick="delItem(this)" aria-label="この品物を削除">${IC.close}</button>
+    </div>
+    <div class="dynfields"></div>
+    <div class="yosokuwrap"></div>
+    <div class="grid g2" style="margin-top:6px;">
+      <div><div class="sub">上代¥ <span class="autohint" id="jh${id}"></span></div><input class="jd" type="number" inputmode="numeric" value="${preset.jd||0}" oninput="recalc()"></div>
+      <div><div class="sub">下代¥（買取額）</div><input class="gd" type="number" inputmode="numeric" value="${preset.gd||0}" oninput="recalc()"></div>
+    </div>
+    <div class="grid g2" style="margin-top:6px;">
+      <div><div class="sub">数量</div><input class="qty" type="number" inputmode="numeric" value="${preset.qty||1}" oninput="onQty(${id})"></div><div></div>
+    </div>
+    <div class="pf" id="pf${id}">粗利 ¥0</div>`;
+  document.getElementById("items").appendChild(w);
+  renderFields(id,preset); renumber(); recalc();
+}
+function renderFields(id,preset){
+  preset=preset||{};
+  const w=document.querySelector(`.item[data-id="${id}"]`);
+  const g=w.querySelector(".genre").value, L=LAYOUT[g]||{itemname:true}, box=w.querySelector(".dynfields");
+  let h="";
+  if(L.brand||L.line){
+    h+=`<div class="grid ${L.line?'g2':'g1'}">`;
+    if(L.brand) h+=`<div><div class="sub">ブランド</div><select class="brand">${opt(BRANDS,preset.brand||"")}</select></div>`;
+    if(L.line)  h+=`<div><div class="sub">ライン</div><select class="line">${opt(LINES,preset.line||"")}</select></div>`;
+    h+=`</div>`;
+  }
+  if(L.kinken){
+    const kt=preset.ktype||(w.querySelector(".ktype")?w.querySelector(".ktype").value:"テレホンカード");
+    const kdoSel=preset.kdo||(w.querySelector(".kdo")?w.querySelector(".kdo").value:"50度数");
+    h+=`<div class="grid g2"><div><div class="sub">種別</div><select class="ktype" onchange="renderFields(${id})"><option>テレホンカード</option><option>切手</option><option>その他</option></select></div>`;
+    if(kt==="テレホンカード") h+=`<div><div class="sub">度数</div><select class="kdo" onchange="renderFields(${id})">${opt(TELECA_DO,kdoSel)}</select></div>`;
+    else h+=`<div><div class="sub">内容（自由記入）</div><input class="kfree" value="${(preset.kfree||'').replace(/"/g,'&quot;')}" placeholder="例：記念切手"></div>`;
+    h+=`</div>`;
+    if(kt==="テレホンカード"&&kdoSel==="その他度数"){
+      h+=`<div style="margin-top:6px;"><div class="sub">度数（自由入力）<span class="opt">例：100度数</span></div><input class="kdofree" value="${(preset.kdofree||'').replace(/"/g,'&quot;')}" placeholder="例：100度数" style="background:var(--form-bg);"></div>`;
+      h+=`<div class="sub" style="color:var(--ocr);margin-top:4px;">※単価表に無い度数のため上代は手入力してください（種別はテレホンカードのまま記録されます）</div>`;
+    }
+  }
+  if(L.kosen) h+=`<div><div class="sub">種類<span class="opt">一覧に無ければ空欄＋商品名で</span></div><select class="kosen">${opt(KOSEN,preset.kosen||"")}</select></div>`;
+  if(L.itemname){
+    const ph=g==="貴金属"?"例：K18喜平ネックレス":g==="宝石"?"例：Pt900 ダイヤリング":"商品名";
+    h+=`<div style="margin-top:6px;"><div class="sub">商品名</div><input class="iname" value="${(preset.iname||'').replace(/"/g,'&quot;')}" placeholder="${ph}"></div>`;
+  }
+  if(L.weight) h+=`<div style="margin-top:6px;"><div class="sub">重量(g)</div><input class="wt" type="number" inputmode="decimal" value="${preset.wt||''}" placeholder="必ず計量" style="background:var(--form-bg);"></div>`;
+  box.innerHTML=h;
+  if(L.kinken&&preset.ktype){const k=w.querySelector(".ktype"); if(k)k.value=preset.ktype;}
+  if(L.kinken&&preset.kdo){const k=w.querySelector(".kdo"); if(k)k.value=preset.kdo;}
+
+  const yw=w.querySelector(".yosokuwrap");
+  yw.innerHTML = L.weight ? `<div style="margin-top:6px;"><div class="sub">予測上代¥（実際価格）</div><input class="yosoku" type="number" inputmode="numeric" value="${preset.yosoku||''}" placeholder="実際価格" oninput="onYosoku(${id})"></div>` : "";
+
+  if(GENRE_OROSHI[g]){const os=w.querySelector(".oroshi"); if(os)os.value=GENRE_OROSHI[g];}
+  onTeleca(id); onYosoku(id); jdHint(id); recalc();
+}
+function onTeleca(id){const it=q(id);const kdo=it.querySelector('.kdo');if(!kdo)return;
+  if(kdo.value==="その他度数"){jdHint(id); recalc(); return;}
+  const qty=+v(it,'.qty')||0, unit=TELECA_UNIT[kdo.value]||0; it.querySelector('.jd').value=qty*unit; jdHint(id); recalc();}
+function onYosoku(id){const it=q(id);const y=it.querySelector('.yosoku');if(!y)return;
+  it.querySelector('.jd').value=Math.round((+y.value||0)*KIKINZOKU_RATE); jdHint(id); recalc();}
+function onQty(id){onTeleca(id); recalc();}
+function jdHint(id){const it=q(id);const el=it.querySelector(`#jh${id}`);if(!el)return;
+  const kdo=it.querySelector('.kdo');
+  el.textContent = kdo ? (kdo.value==="その他度数"?"（手入力）":"（数量×単価で自動）") : it.querySelector('.yosoku')?'（予測上代×0.9で自動）':'';}
+function delItem(b){b.closest(".item").remove(); renumber(); recalc();}
+function renumber(){document.querySelectorAll('.item .ino').forEach((e,i)=>e.textContent=i+1);}
+function q(id){return document.querySelector(`.item[data-id="${id}"]`);}
+function v(it,c){const e=it.querySelector(c);return e?e.value:"";}
+function recalc(){let tj=0,tg=0,n=0;
+  document.querySelectorAll('.item').forEach(it=>{const j=+v(it,'.jd')||0,g=+v(it,'.gd')||0,p=j-g;tj+=j;tg+=g;n++;
+    const pf=it.querySelector('.pf');pf.textContent='粗利 ¥'+p.toLocaleString();pf.classList.toggle('minus',p<0);});
+  const tp=tj-tg;
+  tJ.textContent='¥'+tj.toLocaleString();tG.textContent='¥'+tg.toLocaleString();
+  tP.textContent='¥'+tp.toLocaleString();tP.classList.toggle('minus',tp<0);
+  // 精算バー（署名要素）: 粗利ライブ
+  const sp=document.getElementById('sbP'), sn=document.getElementById('sbN');
+  if(sp){ sp.textContent=(tp<0?'-¥'+Math.abs(tp).toLocaleString():'¥'+tp.toLocaleString()); sp.classList.toggle('minus',tp<0); }
+  if(sn){ sn.textContent=n+'点'; }
+}
+
+// ===== 収集 =====
+function collect(){
+  return [...document.querySelectorAll('.item')].map(it=>{
+    const g=v(it,'.genre');
+    const kdoVal=v(it,'.kdo'), kdofreeVal=v(it,'.kdofree');
+    const detail = (kdoVal==="その他度数"?(kdofreeVal||"その他度数"):kdoVal)||v(it,'.kfree')||v(it,'.kosen')||"";
+    const o={ genre:g, oroshi:v(it,'.oroshi'), brand:v(it,'.brand'), line:v(it,'.line'),
+      ktype:v(it,'.ktype'), kdofree:kdofreeVal||"", detail:detail, iname:v(it,'.iname'), wt:v(it,'.wt'),
+      yosoku:+v(it,'.yosoku')||0, qty:+v(it,'.qty')||1, jd:+v(it,'.jd')||0, gd:+v(it,'.gd')||0 };
+    o.dispname = o.iname || detail || (o.brand?`${o.brand}${o.line?' '+o.line:''}`:"") || g;
+    return o;
+  });
+}
+function buildPayload(){
+  readPersonInputs();
+  return { buyer:val('buyer'), genba:val('genba'), channel:val('channel'),
+    taiou:val('taiou'), promo:val('promo'), biko:val('biko'), person:OCR,
+    images:{ denpyo:IMAGES.denpyo, license:IMAGES.license, items:IMAGES.items },
+    items:collect() };
+}
+function val(id){return document.getElementById(id).value;}
+
+// ===== 画像（1280pxに圧縮して保持） =====
+const IMAGES={ denpyo:null, license:null, items:[] };
+function pick(kind,cam){ document.getElementById('file_'+kind+'_'+(cam?'cam':'lib')).click(); }
+async function onPick(e,kind){
+  const files=[...e.target.files]; if(!files.length) return;
+  for(const f of files){
+    try{
+      const b64=await compressImage(f,1280,0.8);
+      if(kind==='items'){ if(IMAGES.items.length<3) IMAGES.items.push(b64); else alert('商品画像は最大3枚です'); }
+      else IMAGES[kind]=b64;
+    }catch(err){ alert('画像の読み込みに失敗しました。別の写真でお試しください。'); }
+  }
+  renderThumbs(kind); e.target.value='';
+}
+function compressImage(file,maxW,q){
+  return new Promise((res,rej)=>{
+    const img=new Image(); const url=URL.createObjectURL(file);
+    img.onload=()=>{
+      const sc=Math.min(1,maxW/Math.max(img.width,img.height));
+      const c=document.createElement('canvas');
+      c.width=Math.round(img.width*sc); c.height=Math.round(img.height*sc);
+      c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+      URL.revokeObjectURL(url); res(c.toDataURL('image/jpeg',q));
+    };
+    img.onerror=()=>{ URL.revokeObjectURL(url); rej(new Error('load error')); };
+    img.src=url;
+  });
+}
+function renderThumbs(kind){
+  const box=document.getElementById('th_'+kind); if(!box) return;
+  const arr = kind==='items' ? IMAGES.items : (IMAGES[kind]?[IMAGES[kind]]:[]);
+  box.innerHTML = arr.map((b,i)=>`<div class="th"><img src="${b}" alt=""><button class="del" onclick="delImg('${kind}',${i})" aria-label="この画像を削除">${IC.close}</button></div>`).join('');
+  const chip=document.getElementById('chip_'+kind);
+  if(chip){
+    const on=arr.length>0;
+    chip.textContent = on ? (kind==='items'?`${arr.length}枚 添付済み`:'添付済み') : '未添付';
+    chip.classList.toggle('on',on);
+  }
+  updateOcrBtn();
+}
+function delImg(kind,i){
+  if(kind==='items') IMAGES.items.splice(i,1); else IMAGES[kind]=null;
+  renderThumbs(kind);
+}
+function updateOcrBtn(){
+  const b=document.getElementById('ocrBtn'); if(!b) return;
+  const d=!!IMAGES.denpyo, l=!!IMAGES.license;
+  b.disabled=!(d||l);
+  b.innerHTML = IC.scan+' '+(d&&l ? '伝票と身分証をまとめて読取（突合チェック付き）'
+                : d ? '伝票のみ読取（身分証は後からでも可）'
+                : l ? '身分証のみ読取'
+                : '画像を添付すると読取できます');
+}
+
+// ===== 一括読取（伝票＋身分証を1リクエスト・片方のみ可） =====
+function setIfOcr(id,val){ if(val){ const el=document.getElementById(id); if(el) el.value=val; } }
+function applyOcr(r){
+  const d=r.ocr.denpyo||{}, l=r.ocr.license||{}, notes=[];
+  if(d.detected){
+    setIfOcr('buyer',d.buyer); setIfOcr('genba',d.genba);
+    if(d.channel){ document.getElementById('channel').value=d.channel; updateConv(); }
+    setIfOcr('p_shokugyo',d.shokugyo);
+    setIfOcr('p_zip',d.zip);                          // 伝票の〒欄から
+    if(!l.detected){
+      if(d.customerName && !val('p_name')) setIfOcr('p_name',d.customerName);
+      setIfOcr('p_birth',d.birth);                    // 伝票の生年月日欄から
+    }
+  }
+  if(l.detected){
+    setIfOcr('p_name',l.name); setIfOcr('p_banchi',l.banchi);
+    setIfOcr('p_birth',l.birth); setIfOcr('p_num',l.num);
+    setIfOcr('p_method',l.type);                      // 証明書種別を自動判定（免許証/マイナンバーカード等）
+    document.getElementById('p_addr_note').textContent = l.addr ? `読取住所: ${l.addr} ${l.banchi||''}（都道府県〜町域は台帳側で郵便番号から自動補完）` : '';
+    const num=document.getElementById('p_num');
+    if(l.type==='マイナンバーカード'){
+      num.value=''; num.placeholder='マイナンバーカードのため空欄（個人番号の記録は法律で禁止）';
+      notes.push('身分証はマイナンバーカードと判定。番号欄は空欄のままにしてください');
+    } else { num.placeholder='例：0000 0000 0000'; }
+  }
+  if((d.detected||l.detected) && !val('p_zip')) notes.push('郵便番号が読み取れませんでした。手入力してください');
+  const mm=document.getElementById('mismatchBox');
+  if(r.ocr.match && r.ocr.match.checked && r.ocr.match.same===false){
+    mm.style.display='block';
+    mm.innerHTML=IC.warn+' <b>伝票の顧客名と身分証の氏名が一致しません。</b><br>'+(r.ocr.match.note||'')+'<br>身分証の取り違えがないか確認してください。';
+  } else { mm.style.display='none'; }
+  const sum=document.getElementById('personSum');
+  const filled=val('p_name');
+  if(filled && !notes.length && mm.style.display==='none'){
+    sum.innerHTML=`<span class="psum-ok">${IC.check} 本人確認 読取済み：${filled} 様（タップで確認・修正）</span>`;
+  } else if(filled){
+    sum.innerHTML=`<span class="psum-warn">△ 本人確認 一部入力済み：${filled} 様（要確認・タップで開く）</span>`;
+    document.getElementById('personBox').open=true;
+  } else {
+    sum.innerHTML=`<span class="psum-warn">△ 本人確認 未入力（タップで手入力）</span>`;
+    document.getElementById('personBox').open=true;
+  }
+  // ポップアップは出さず、工程03内にインライン表示（自動で消えない・接客の邪魔をしない）
+  renderOcrNotes([...(r.warnings||[]), ...notes]);
+}
+function renderOcrNotes(msgs){
+  const box=document.getElementById('ocrNotes');
+  if(!msgs.length){ box.style.display='none'; box.innerHTML=''; return; }
+  box.innerHTML = msgs.map(m=>`<div class="ln">${IC.info}<span>${m}</span></div>`).join('');
+  box.style.display='block';
+}
+async function runOcr(){
+  const b=document.getElementById('ocrBtn');
+  b.disabled=true; const orig=b.innerHTML; b.innerHTML=IC.spin+' 読取中…（3〜6秒）';
+  try{
+    const r = await postToGas({ mode:'ocr', images:{ denpyo:IMAGES.denpyo, license:IMAGES.license } });
+    if(r.ok){ applyOcr(r); }
+    else{ alert('読取エラー: '+r.error+'\n手入力で続行できます。'); }
+  }catch(err){
+    // プレビュー環境: 模擬読取（結果は工程03のインライン通知に表示・ポップアップなし）
+    applyOcr(simulateOcrResponse(IMAGES));
+  }finally{
+    b.innerHTML=orig; updateOcrBtn();
+  }
+}
+
+
+// ===== プレビュー用モーダル（alert/confirm代替） =====
+function showModal(title, body, simNote){
+  const bg=document.createElement('div'); bg.className='mdl-bg';
+  bg.innerHTML=`<div class="mdl"><h4>${title}</h4>${simNote?`<div class="sim">${simNote}</div>`:''}<pre>${body}</pre><button>閉じる</button></div>`;
+  bg.querySelector('button').onclick=()=>bg.remove();
+  document.body.appendChild(bg);
+}
+function alert(msg){ const l=String(msg).split('\n'); showModal(l[0], l.slice(1).join('\n')||' '); }
+function confirm(msg){ showModal('確認（プレビューでは自動でOK）', String(msg)); return true; }
+
+// ===== 模擬応答（実サンプル: 2026/7/8 湯河原・小松様。GAS v2.3の応答仕様と同一書式） =====
+let _simSeq=995;
+function simulateGasResponse(p){
+  const wn=[]; const pre=PREFIX[p.buyer]||'??';
+  const nos=p.items.map(()=>pre+(++_simSeq));
+  if(p.channel==='その他') wn.push('[既知の副作用] きっかけ「その他」は経路空欄のため伝票の総査定件数(COUNTA)に載りません');
+  p.items.forEach(it=>{ if(!(+it.jd)) wn.push(`[上代未設定] ${it.genre}/${it.iname||it.detail}: 上代0のまま書込`); });
+  return {ok:true, nos:nos, warnings:wn};
+}
+function simulateOcrResponse(imgs){
+  const hasD=!!imgs.denpyo, hasL=!!imgs.license;
+  return {ok:true, warnings:[],
+    ocr:{ denpyo: hasD?{detected:true,buyer:'藤原慶俊',genba:'湯河原',channel:'声掛',customerName:'小松豊子',zip:'259-0301',birth:'昭和24年10月16日',shokugyo:'主婦'}:{detected:false},
+          license: hasL?{detected:true,type:'マイナンバーカード',name:'小松豊子',addr:'神奈川県足柄下郡湯河原町中央',banchi:'4-21-13 貴田荘',birth:'昭和24年10月16日',num:''}:{detected:false},
+          match:(hasD&&hasL)?{checked:true,same:true,note:''}:{checked:false} }};
+}
+function ph(label){
+  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144"><rect width="144" height="144" fill="#EDE8DC"/><rect x="14" y="14" width="116" height="116" fill="none" stroke="#B9AF98" stroke-width="2" stroke-dasharray="6 5" rx="8"/><text x="72" y="70" font-size="14" text-anchor="middle" fill="#6B7280" font-family="sans-serif">${label}</text><text x="72" y="90" font-size="11" text-anchor="middle" fill="#9A917D" font-family="sans-serif">サンプル</text></svg>`;
+  return 'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg);
+}
+
+// ===== 本番送信（GAS v2.1 /exec 接続済み） =====
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbzlNtVKi_awf2cydvbOC5cWgYkCB1P7s2JPt8oPRfx1fBt6hDGuEbHst7Cwr1OMOLk0/exec';
+
+const _memQueue = [];  // プレビュー: メモリ保持のみ
+function qLoad(){ return _memQueue.slice(); }
+function qSave(arr){ _memQueue.length=0; Array.prototype.push.apply(_memQueue,arr); }
+
+async function postToGas(payload){
+  const ctl = new AbortController();
+  setTimeout(()=>ctl.abort(), 8000);
+  const res = await fetch(GAS_URL, {
+    signal: ctl.signal,
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    redirect: 'follow',
+    body: JSON.stringify(payload)
+  });
+  return await res.json();
+}
+
+async function submitReal(){
+  const btn = document.querySelector('.payline button.go');
+  const p = buildPayload();
+  const miss=[];
+  if(!p.buyer) miss.push('・担当（バイヤー）');
+  if(!p.genba.trim()) miss.push('・現場名');
+  if(!p.channel) miss.push('・きっかけ');
+  if(!p.person.name.trim()) miss.push('・本人確認の氏名');
+  if(!p.items.length) miss.push('・品物（1件以上）');
+  if(miss.length){ alert('未入力の必須項目があります:\n'+miss.join('\n')); return; }
+  if(p.items.some(it=>!it.gd)){ if(!confirm('下代（買取額）が0円の品物があります。このまま送信しますか？')) return; }
+  btn.disabled = true; btn.textContent = '送信中…';
+  try{
+    const r = await postToGas(p);
+    if(r.ok){
+      let msg = '管理番号: ' + r.nos.join(', ');
+      if(r.warnings && r.warnings.length) msg += '\n\n[注意]\n' + r.warnings.join('\n');
+      showModal('送信完了（実送信）', msg, 'この環境から実際にGASへ届きました。4帳簿を確認してください。');
+      resetDemo();
+    }else{
+      alert('送信エラー: ' + r.error + '\n\nもう一度お試しください。直らない場合は事務所へ連絡。');
+    }
+  }catch(err){
+    const r = simulateGasResponse(p);
+    let msg = '管理番号: ' + r.nos.join(', ');
+    if(r.warnings.length) msg += '\n\n[注意]\n' + r.warnings.join('\n');
+    showModal('送信完了（模擬）', msg, 'プレビュー環境のため実送信は行われていません。本番版では実際に4帳簿へ転記されます。');
+    submitForm();
+  }finally{
+    btn.disabled = false; btn.textContent = '送信する';
+  }
+}
+
+async function resendQueue(){
+  const queue = qLoad();
+  if(!queue.length){ alert('保留中の送信はありません'); return; }
+  const remain = [];
+  let done = 0;
+  for(const q of queue){
+    try{ const r = await postToGas(q.payload); if(r.ok) done++; else remain.push(q); }
+    catch(e){ remain.push(q); }
+  }
+  qSave(remain);
+  alert('再送完了: ' + done + '件送信 / 残り保留: ' + remain.length + '件');
+}
+
+// ===== 反映プレビュー描画 =====
+function submitForm(){
+  const p=buildPayload();
+  const buyer=p.buyer, pf=PREFIX[buyer]||'XX';
+  const route=CHANNEL_TO_ROUTE[p.channel], nyuryu=CHANNEL_TO_NYURYU[p.channel];
+  const today=new Date(), dstr=today.getFullYear()+'/'+(today.getMonth()+1)+'/'+today.getDate();
+  const rows=p.items.map((r,i)=>({...r, ys:pf+(2200+i), profit:(r.jd-r.gd)}));
+  const tj=rows.reduce((s,r)=>s+r.jd,0), tg=rows.reduce((s,r)=>s+r.gd,0);
+  const tbl=(head,body)=>`<div class="otbl"><table><thead><tr>${head.map(h=>`<th>${h}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div>`;
+  let html='';
+
+  html+=`<div class="out"><div class="oh"><span class="n">↳</span>きっかけ → 経路・流入の自動変換</div>`+
+    `<div class="kv"><div class="k">きっかけ（伝票）</div><div class="v o">${p.channel}</div>`+
+    `<div class="k">経路（買取伝票）</div><div class="v a">${route||'（空）※査定件数集計に載りません'}</div>`+
+    `<div class="k">流入（古物台帳）</div><div class="v a">${nyuryu}</div>`+
+    `<div class="k">対応方法（古物台帳）</div><div class="v f">${p.taiou}</div></div></div>`;
+
+  const koh=["No.","買取日","ジャンル","種別","詳細","ブランド","ライン","商品名","重量","数量","上代","下代","粗利","卸先","顧客名","郵便番号","丁目番地号","生年月日","職業","確認方法","流入"];
+  const kb=rows.map(r=>`<tr><td class="a">${r.ys}</td><td class="a">${dstr}</td><td class="f">${r.genre}</td><td class="f">${r.ktype||'-'}</td><td class="f">${r.detail||'-'}</td><td class="f">${r.brand||'-'}</td><td class="f">${r.line||'-'}</td><td class="f">${r.iname||'-'}</td><td class="f">${r.wt||'-'}</td><td class="f">${r.qty}</td><td class="f">¥${r.jd.toLocaleString()}</td><td class="f">¥${r.gd.toLocaleString()}</td><td class="a">¥${r.profit.toLocaleString()}</td><td class="f">${r.oroshi}</td><td class="o">${OCR.name}</td><td class="o">${OCR.zip}</td><td class="o">${OCR.banchi}</td><td class="o">${OCR.birth}</td><td class="o">${OCR.shokugyo}</td><td class="o">${OCR.method}</td><td class="a">${nyuryu}</td></tr>`).join("");
+  html+=`<div class="out"><div class="oh"><span class="n">1</span>古物台帳【MUSE】／${buyer}（${rows.length}点）</div>${tbl(koh,kb)}</div>`;
+
+  const soh=["No.","ジャンル","ブランド","商品名","重量","数量","予測上代","上代","下代","粗利","卸先"];
+  const sb=rows.map(r=>`<tr><td class="a">${r.ys}</td><td class="f">${r.genre}</td><td class="f">${r.brand||'-'}</td><td class="f">${r.iname||r.detail||'-'}</td><td class="f">${r.wt||'-'}</td><td class="f">${r.qty}</td><td class="f">${r.yosoku?'¥'+r.yosoku.toLocaleString():'-'}</td><td class="f">¥${r.jd.toLocaleString()}</td><td class="f">¥${r.gd.toLocaleString()}</td><td class="a">¥${r.profit.toLocaleString()}</td><td class="f">${r.oroshi}</td></tr>`).join("");
+  html+=`<div class="out"><div class="oh"><span class="n">2</span>商品登録シート『MUSE』／${buyer}</div>${tbl(soh,sb)}</div>`;
+
+  const inv=rows.filter(r=>r.oroshi==="グランチャ"||r.oroshi==="グランチャ宝石");
+  let invHtml;
+  if(inv.length===0) invHtml=`<div class="slacknote">今回はグランチャ向けの品物がないため、在庫管理表には載りません（グランチャに卸す品物のみ）。</div>`;
+  else{ const ioh=["NO","ジャンル","品名","重量","仕入原価","目標売上","仕入日","仕入先"];
+    const ib=inv.map(r=>`<tr><td class="a">${r.ys}</td><td class="f">${r.genre}</td><td class="f">${r.dispname}</td><td class="f">${r.wt||'-'}</td><td class="f">¥${r.gd.toLocaleString()}</td><td class="f">${r.yosoku?'¥'+r.yosoku.toLocaleString():'-'}</td><td class="a">${dstr}</td><td class="a">（書込禁止）</td></tr>`).join("");
+    invHtml=tbl(ioh,ib); }
+  html+=`<div class="out"><div class="oh"><span class="n">3</span>MUSE在庫管理表／${buyer}（グランチャ向けのみ）</div>${invHtml}</div>`;
+
+  html+=`<div class="out"><div class="oh"><span class="n">4</span>MUSE買取伝票シート／${buyer}伝票（当日ブロックの空きNo.列）</div>`+
+    `<div class="kv"><div class="k">日付</div><div class="v a">${dstr}</div><div class="k">経路</div><div class="v a">${route||'（空）'}</div><div class="k">結果</div><div class="v a">成約</div><div class="k">上代（合算）</div><div class="v a">¥${tj.toLocaleString()}</div><div class="k">下代（合算）</div><div class="v a">¥${tg.toLocaleString()}</div><div class="k">粗利（合算）</div><div class="v a">¥${(tj-tg).toLocaleString()}</div></div></div>`;
+
+  const slack=`【上代】¥${tj.toLocaleString()}-\n【下代】¥${tg.toLocaleString()}-\n【粗利】${(tj-tg)<0?'-¥'+Math.abs(tj-tg).toLocaleString():'¥'+(tj-tg).toLocaleString()}-\n【流入】${nyuryu}\n【その他】${p.biko||''}\n【販促品】${p.promo||'なし'}`;
+  html+=`<div class="out"><div class="oh"><span class="n">5</span>Slack 決済報告（Phase 2 参考）</div><div class="slacknote">テキスト＋画像が投稿されます：</div><div class="slackbox">${slack}\n\n添付: 伝票 ／ 身分証 ／ 商品画像（${rows.length<=3?rows.length:'1〜3'}枚）</div></div>`;
+
+  html+=`<div class="out"><div class="oh"><span class="n">{}</span>GASへ送るデータ（フォームのキー）</div><pre class="json">${esc(JSON.stringify({...p, images:{denpyo:p.images.denpyo?'(画像添付あり)':null, license:p.images.license?'(画像添付あり)':null, items:p.images.items.length+'枚'}},null,2))}</pre></div>`;
+
+  document.getElementById('outputs').innerHTML=html;
+  document.getElementById('form').style.display='none';
+  document.getElementById('submitBar').style.display='none';
+  document.getElementById('result').classList.add('show');
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function esc(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+function resetDemo(){
+  document.getElementById('result').classList.remove('show');
+  document.getElementById('form').style.display='block';
+  document.getElementById('submitBar').style.display='block';
+}
+
+// 初期表示: 実サンプル（2026/7/8 湯河原・小松様）を読取済み状態で再現
+IMAGES.denpyo=ph('買取伝票'); IMAGES.license=ph('身分証');
+renderThumbs('denpyo'); renderThumbs('license');
+document.getElementById('buyer').value='藤原慶俊';
+document.getElementById('genba').value='湯河原';
+document.getElementById('channel').value='声掛';
+updateConv();
+applyOcr(simulateOcrResponse(IMAGES));   // 本人確認: 小松豊子様・マイナンバーカード（通知はインライン表示）
+addItem({genre:"古銭",  iname:"古銭まとめ",           gd:500,  oroshi:"ワタル"});
+addItem({genre:"その他", iname:"イミテーションまとめ", gd:500,  oroshi:"タグ無し"});
+addItem({genre:"その他", iname:"カメオ",               gd:1300, oroshi:"タグ無し"});
+</script>
+</body>
+</html>
