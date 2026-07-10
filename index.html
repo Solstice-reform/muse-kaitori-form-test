@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MUSE 買取入力 v6.1（本番）</title>
+<title>MUSE 買取入力 v6.2（本番）</title>
 <style>
   :root{
     /* 紙とはんこ: 背景=自社伝票のクリーム紙 / 墨 / 常磐緑(屋号) / 朱肉(警告のみ) */
@@ -15,6 +15,20 @@
     --r:14px;
   }
 
+
+  .dlg-bg{position:fixed;inset:0;background:rgba(32,48,63,.55);display:none;align-items:center;justify-content:center;z-index:99;padding:16px;}
+  .dlg-bg.show{display:flex;}
+  .dlg{background:#fff;border-radius:14px;max-width:420px;width:100%;padding:18px;box-shadow:0 12px 40px rgba(0,0,0,.28);}
+  .dlg h4{margin:0 0 10px;font-size:15px;display:flex;align-items:center;gap:8px;}
+  .dlg pre{white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.7;margin:0 0 14px;color:#333;max-height:45vh;overflow:auto;}
+  .dlg .btns{display:flex;gap:9px;}
+  .dlg button{flex:1;padding:12px;border:0;border-radius:9px;font-size:14px;font-weight:700;font-family:inherit;cursor:pointer;}
+  .dlg button.pri{background:var(--tokiwa);color:#fff;}
+  .dlg button.sec{background:#EEEAE0;color:var(--ink);}
+  .gasdot{margin-left:10px;width:11px;height:11px;border-radius:50%;background:#8a97a3;border:2px solid rgba(243,239,231,.5);padding:0;cursor:pointer;flex-shrink:0;align-self:center;}
+  .gasdot.ok{background:#3FB58B;} .gasdot.ng{background:#E06A5B;}
+  .qbadge{display:inline-flex;min-width:18px;height:18px;border-radius:9px;background:var(--shu);color:#fff;
+    font-size:11px;font-weight:800;align-items:center;justify-content:center;padding:0 5px;margin-left:6px;vertical-align:middle;}
   .ic{width:1.1em;height:1.1em;vertical-align:-0.18em;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;}
   .ic.spin{animation:icsp 1s linear infinite;}
   @keyframes icsp{to{transform:rotate(360deg)}}
@@ -165,7 +179,8 @@
 <header class="app">
   <span class="mark"><svg class="ic" viewBox="0 0 24 24" style="width:1.25em;height:1.25em;"><path d="M12 10.5V21M8 21h8"/><path d="M4.5 8.5 19 5l-4.6 5.8z" fill="currentColor" stroke="none"/></svg></span>
   <span class="ttl">買取かざみどり</span>
-  <span class="sub">現場入力 v6.1</span>
+  <span class="sub">現場入力 v6.2</span>
+  <button class="gasdot" id="gasDot" onclick="showGasStatus()" aria-label="GAS接続状態"></button>
 </header>
 
 <div class="wrap">
@@ -307,7 +322,7 @@
   </div>
   <button class="go" onclick="submitReal()">送信する</button>
 </div>
-<button class="resendln" onclick="resendQueue()"><svg class="ic" viewBox="0 0 24 24"><path d="M5 9a10 10 0 0 1 14 0M8 12.5a6 6 0 0 1 8 0"/><circle cx="12" cy="17" r="1.4"/><path d="M12 18.4V21"/></svg> 圏外時の保留分を再送する</button>
+<button class="resendln" id="resendBtn" onclick="resendQueue()"><svg class="ic" viewBox="0 0 24 24"><path d="M5 9a10 10 0 0 1 14 0M8 12.5a6 6 0 0 1 8 0"/><circle cx="12" cy="17" r="1.4"/><path d="M12 18.4V21"/></svg> 圏外時の保留分を再送する<span class="qbadge" id="qbadge" style="display:none;"></span></button>
 </div>
 
 <script>
@@ -474,6 +489,54 @@ function buildPayload(){
 }
 function val(id){return document.getElementById(id).value;}
 
+
+// ===== 画面内ダイアログ（OS標準alert/confirmは端末により表示されないため不使用） =====
+let _dlgResolve=null;
+function _dlg(title, body, buttons){
+  return new Promise(resolve=>{
+    _dlgResolve=resolve;
+    const bg=document.getElementById('dlgBg');
+    document.getElementById('dlgTitle').textContent=title;
+    document.getElementById('dlgBody').textContent=body||'';
+    const btns=document.getElementById('dlgBtns');
+    btns.innerHTML='';
+    buttons.forEach(b=>{
+      const el=document.createElement('button');
+      el.className=b.sec?'sec':'pri'; el.textContent=b.label;
+      el.onclick=()=>{ bg.classList.remove('show'); const r=_dlgResolve; _dlgResolve=null; if(r) r(b.value); };
+      btns.appendChild(el);
+    });
+    bg.classList.add('show');
+  });
+}
+document.addEventListener('DOMContentLoaded',()=>{
+  document.getElementById('dlgBg').addEventListener('click',e=>{
+    if(e.target.id==='dlgBg'){ e.target.classList.remove('show'); const r=_dlgResolve; _dlgResolve=null; if(r) r(false); }
+  });
+});
+function alertModal(title, body){ return _dlg(title, body, [{label:'閉じる', value:true}]); }
+function confirmModal(title, body){ return _dlg(title, body, [{label:'キャンセル', value:false, sec:true},{label:'送信する', value:true}]); }
+
+// ===== GAS接続ランプ（起動時に疎通確認・タップで詳細） =====
+let _gasStatus={checked:false, ok:false, detail:'未確認'};
+async function checkGas(){
+  const dot=document.getElementById('gasDot');
+  try{
+    const r=await postToGas({mode:'ping'});
+    if(r.ok){
+      _gasStatus={checked:true, ok:true, detail:'接続OK  '+(r.version||'')+'\nAPIキー: '+(r.apiKeySet?'設定済み':'未設定')+'\n'+Object.entries(r.sheets||{}).map(([k,v])=>'・'+k+' → '+v).join('\n')};
+      dot.className='gasdot ok';
+    }else{
+      _gasStatus={checked:true, ok:false, detail:'GASがエラー応答: '+(r.error||'')+'\n（GASが旧バージョンの可能性。新バージョンで再デプロイしてください）'};
+      dot.className='gasdot ng';
+    }
+  }catch(err){
+    _gasStatus={checked:true, ok:false, detail:'GASに接続できません: '+err.message+'\n\n確認: ①電波状況 ②デプロイ設定「アクセスできるユーザー: 全員」③新バージョンで再デプロイ済みか'};
+    dot.className='gasdot ng';
+  }
+}
+function showGasStatus(){ alertModal(_gasStatus.ok?'GAS接続状態: 正常':'GAS接続状態: 要確認', _gasStatus.detail+'\n\n（ヘッダーのランプ: 緑=接続OK / 赤=不通。再読み込みで再チェック）'); }
+
 // ===== 画像（1280pxに圧縮して保持） =====
 const IMAGES={ denpyo:null, license:null, items:[] };
 function pick(kind,cam){ document.getElementById('file_'+kind+'_'+(cam?'cam':'lib')).click(); }
@@ -482,9 +545,9 @@ async function onPick(e,kind){
   for(const f of files){
     try{
       const b64=await compressImage(f,1280,0.8);
-      if(kind==='items'){ if(IMAGES.items.length<3) IMAGES.items.push(b64); else alert('商品画像は最大3枚です'); }
+      if(kind==='items'){ if(IMAGES.items.length<3) IMAGES.items.push(b64); else alertModal('上限', '商品画像は最大3枚です。'); }
       else IMAGES[kind]=b64;
-    }catch(err){ alert('画像の読み込みに失敗しました。別の写真でお試しください。'); }
+    }catch(err){ alertModal('画像エラー', '画像の読み込みに失敗しました。別の写真でお試しください。'); }
   }
   renderThumbs(kind); e.target.value='';
 }
@@ -585,9 +648,9 @@ async function runOcr(){
   try{
     const r = await postToGas({ mode:'ocr', images:{ denpyo:IMAGES.denpyo, license:IMAGES.license } });
     if(r.ok){ applyOcr(r); }
-    else{ alert('読取エラー: '+r.error+'\n手入力で続行できます。'); }
+    else{ alertModal('読取エラー', r.error+'\n手入力で続行できます。'); }
   }catch(err){
-    alert('通信に失敗しました。電波の良い場所で再度お試しください（読取なしでも手入力で送信できます）。');
+    if(err.isConfig){ alertModal('GAS設定エラー', err.message); } else { alertModal('通信エラー', '読取の通信に失敗しました。電波の良い場所で再度お試しください（読取なしでも手入力で送信できます）。'); }
   }finally{
     b.innerHTML=orig; updateOcrBtn();
   }
@@ -601,16 +664,28 @@ function qLoad(){ try{ return JSON.parse(localStorage.getItem('muse_queue')||'[]
 function qSave(arr){ try{ localStorage.setItem('muse_queue', JSON.stringify(arr)); }catch(e){ _memQueue.length=0; Array.prototype.push.apply(_memQueue,arr); } }
 
 async function postToGas(payload){
-  const res = await fetch(GAS_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    redirect: 'follow',
-    body: JSON.stringify(payload)
-  });
-  return await res.json();
+  const ctl = new AbortController();
+  const timer = setTimeout(()=>ctl.abort(), 15000);   // 15秒で打ち切り（「送信中…」のまま固まるのを防止）
+  try{
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      redirect: 'follow',
+      signal: ctl.signal,
+      body: JSON.stringify(payload)
+    });
+    const text = await res.text();
+    try{ return JSON.parse(text); }
+    catch(e){
+      const err = new Error('GASの応答が不正です（ログイン画面等が返却）。デプロイ設定「アクセスできるユーザー: 全員」を確認してください');
+      err.isConfig = true; throw err;
+    }
+  }finally{ clearTimeout(timer); }
 }
 
+let _sending=false;
 async function submitReal(){
+  if(_sending) return;                                  // 二重送信ガード
   const btn = document.querySelector('.payline button.go');
   const p = buildPayload();
   const miss=[];
@@ -619,40 +694,60 @@ async function submitReal(){
   if(!p.channel) miss.push('・きっかけ');
   if(!p.person.name.trim()) miss.push('・本人確認の氏名');
   if(!p.items.length) miss.push('・品物（1件以上）');
-  if(miss.length){ alert('未入力の必須項目があります:\n'+miss.join('\n')); return; }
-  if(p.items.some(it=>!it.gd)){ if(!confirm('下代（買取額）が0円の品物があります。このまま送信しますか？')) return; }
-  btn.disabled = true; btn.textContent = '送信中…';
+  if(miss.length){ await alertModal('未入力の必須項目があります', miss.join('\n')); return; }
+  if(p.items.some(it=>!it.gd)){
+    if(!(await confirmModal('確認', '下代（買取額）が0円の品物があります。このまま送信しますか？'))) return;
+  }
+  _sending=true; btn.disabled = true; btn.textContent = '送信中…';
   try{
     const r = await postToGas(p);
     if(r.ok){
-      let msg = '送信完了\n管理番号: ' + r.nos.join(', ');
+      let msg = '管理番号: ' + r.nos.join(', ');
       if(r.warnings && r.warnings.length) msg += '\n\n[注意]\n' + r.warnings.join('\n');
-      alert(msg);
+      await alertModal('送信完了', msg);
       resetDemo();
     }else{
-      alert('送信エラー: ' + r.error + '\n\nもう一度お試しください。直らない場合は事務所へ連絡。');
+      await alertModal('送信エラー', r.error + '\n\nもう一度お試しください。直らない場合は事務所へ連絡。');
     }
   }catch(err){
-    const queue = qLoad();
-    queue.push({ savedAt: new Date().toISOString(), payload: p });
-    qSave(queue);
-    alert('通信に失敗したため端末に保存しました（' + queue.length + '件保留中）。\n電波の良い場所で「保留分を再送」を押してください。');
+    if(err.isConfig){
+      await alertModal('GAS設定エラー', err.message + '\n\n（このエラーは再送しても直りません。保留には入れていません）');
+    }else{
+      const queue = qLoad();
+      queue.push({ savedAt: new Date().toISOString(), payload: p });
+      qSave(queue); renderQueueBadge();
+      await alertModal('通信に失敗しました', '入力内容を端末に保存しました（' + queue.length + '件保留中）。\n電波の良い場所で「保留分を再送」を押してください。');
+    }
   }finally{
-    btn.disabled = false; btn.textContent = '送信する';
+    _sending=false; btn.disabled = false; btn.textContent = '送信する';
   }
 }
 
+let _resending=false;
 async function resendQueue(){
+  if(_resending) return;
   const queue = qLoad();
-  if(!queue.length){ alert('保留中の送信はありません'); return; }
-  const remain = [];
-  let done = 0;
+  if(!queue.length){ await alertModal('保留なし', '保留中の送信はありません。'); return; }
+  _resending=true;
+  const b=document.getElementById('resendBtn');
+  const orig=b.innerHTML; b.innerHTML=IC.spin+' 再送中…（'+queue.length+'件）';
+  const remain = []; let done = 0; let configErr=null;
   for(const q of queue){
     try{ const r = await postToGas(q.payload); if(r.ok) done++; else remain.push(q); }
-    catch(e){ remain.push(q); }
+    catch(e){ remain.push(q); if(e.isConfig) configErr=e.message; }
   }
-  qSave(remain);
-  alert('再送完了: ' + done + '件送信 / 残り保留: ' + remain.length + '件');
+  qSave(remain); 
+  _resending=false; b.innerHTML=orig; renderQueueBadge();
+  let msg='送信できた件数: '+done+'件\n残り保留: '+remain.length+'件';
+  if(configErr) msg+='\n\nGAS設定エラー: '+configErr;
+  else if(remain.length) msg+='\n（電波の良い場所で再度お試しください）';
+  await alertModal('再送結果', msg);
+}
+function renderQueueBadge(){
+  const el=document.getElementById('qbadge'); if(!el) return;
+  const n=qLoad().length;
+  el.style.display = n? 'inline-flex':'none';
+  el.textContent = n;
 }
 
 // ===== 反映プレビュー描画 =====
@@ -708,6 +803,15 @@ function resetDemo(){ location.reload(); }
 // 初期表示
 updateConv();
 addItem();
+renderQueueBadge();
+checkGas();   // ヘッダーの接続ランプ: 緑=GAS接続OK / 赤=不通（タップで詳細）
 </script>
+<div class="dlg-bg" id="dlgBg">
+  <div class="dlg" role="dialog" aria-modal="true">
+    <h4 id="dlgTitle"></h4>
+    <pre id="dlgBody"></pre>
+    <div class="btns" id="dlgBtns"></div>
+  </div>
+</div>
 </body>
 </html>
