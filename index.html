@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MUSE 買取入力 v6.4（デバッグ）</title>
+<title>MUSE 買取入力 v6.6（デバッグ）</title>
 <style>
   :root{
     /* 紙とはんこ: 背景=自社伝票のクリーム紙 / 墨 / 常磐緑(屋号) / 朱肉(警告のみ) */
@@ -326,6 +326,12 @@
   <button class="go" onclick="submitReal()">送信する</button>
 </div>
 <button class="resendln" id="resendBtn" onclick="resendQueue()"><svg class="ic" viewBox="0 0 24 24"><path d="M5 9a10 10 0 0 1 14 0M8 12.5a6 6 0 0 1 8 0"/><circle cx="12" cy="17" r="1.4"/><path d="M12 18.4V21"/></svg> 圏外時の保留分を再送する<span class="qbadge" id="qbadge" style="display:none;"></span></button>
+<button class="resendln" id="queueViewBtn" onclick="openQueueViewer()" style="display:none;"><svg class="ic" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg> 保留の中身を見る・呼び出す</button>
+<button class="resendln" id="discardBtn" onclick="discardQueue()" style="display:none;"><svg class="ic" viewBox="0 0 24 24"><path d="M5 7h14M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 7M7 7l1 13h8l1-13M10 11v6M14 11v6"/></svg> 保留分を破棄する</button>
+<details style="margin-top:10px;font-size:11px;color:var(--ink2);">
+  <summary style="cursor:pointer;">デバッグログ（送信の内部動作・GASトレース）</summary>
+  <pre id="dbgLog" style="max-height:180px;overflow:auto;background:rgba(0,0,0,.05);border-radius:8px;padding:8px;white-space:pre-wrap;word-break:break-all;margin-top:6px;"></pre>
+</details>
 </div>
 
 <script>
@@ -483,11 +489,16 @@ function collect(){
     return o;
   });
 }
+// ===== v6.6 冪等化: 取引ごとに一意のtxIdを発行(再送しても二重転記されない) =====
+function newTxId(){ try{ return crypto.randomUUID(); }catch(e){ return 'tx-'+Date.now()+'-'+Math.random().toString(36).slice(2,10); } }
+let TX_ID = newTxId();     // resetDemo()=location.reload() で自動再発行。保留呼び出し時は元のtxIdを引き継ぐ
+let RECALLED_AT = null;    // 保留から呼び出した取引のsavedAt(送信成功時に保留から自動削除するため)
+
 function buildPayload(){
   readPersonInputs();
   // 画像は送信に同梱しない（数MBのPOSTがモバイル回線で失敗する原因になるため）。
   // 画像を使うのはOCR（mode:'ocr'）だけ。ここでは添付有無のフラグのみ送る。
-  return { buyer:val('buyer'), genba:val('genba'), channel:val('channel'),
+  return { txId:TX_ID, buyer:val('buyer'), genba:val('genba'), channel:val('channel'),
     taiou:val('taiou'), promo:val('promo'), biko:val('biko'), person:OCR,
     imageFlags:{ denpyo:!!IMAGES.denpyo, license:!!IMAGES.license, items:IMAGES.items.length },
     fileIds:{ denpyo:FILE_IDS.denpyo, license:FILE_IDS.license, items:FILE_IDS.items.filter(Boolean) },
@@ -520,6 +531,23 @@ document.addEventListener('DOMContentLoaded',()=>{
     if(e.target.id==='dlgBg'){ e.target.classList.remove('show'); const r=_dlgResolve; _dlgResolve=null; if(r) r(false); }
   });
 });
+function _dlgHtml(title, html, buttons){
+  return new Promise(resolve=>{
+    _dlgResolve=resolve;
+    const bg=document.getElementById('dlgBg');
+    document.getElementById('dlgTitle').textContent=title;
+    document.getElementById('dlgBody').innerHTML=html||'';
+    const btns=document.getElementById('dlgBtns');
+    btns.innerHTML='';
+    buttons.forEach(b=>{
+      const el=document.createElement('button');
+      el.className=b.sec?'sec':'pri'; el.textContent=b.label;
+      el.onclick=()=>{ bg.classList.remove('show'); const r=_dlgResolve; _dlgResolve=null; if(r) r(b.value); };
+      btns.appendChild(el);
+    });
+    bg.classList.add('show');
+  });
+}
 function alertModal(title, body){ return _dlg(title, body, [{label:'閉じる', value:true}]); }
 function confirmModal(title, body){ return _dlg(title, body, [{label:'キャンセル', value:false, sec:true},{label:'送信する', value:true}]); }
 
@@ -692,7 +720,7 @@ function qSave(arr){ try{ localStorage.setItem('muse_queue', JSON.stringify(arr)
 
 async function postToGas(payload, timeoutMs){
   const ctl = new AbortController();
-  const timer = setTimeout(()=>ctl.abort(), timeoutMs||15000);   // 既定15秒。画像を運ぶOCR/保存は30秒
+  const timer = setTimeout(()=>ctl.abort(), timeoutMs||15000);   // 既定15秒。取引送信45秒/OCR・保存30秒
   try{
     const res = await fetch(GAS_URL, {
       method: 'POST',
@@ -718,7 +746,7 @@ async function quickPing(){
   const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),5000);
   try{
     const res=await fetch(GAS_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},
-      redirect:'follow',signal:ctl.signal,body:JSON.stringify({mode:'ping'})});
+      redirect:'follow',signal:ctl.signal,body:JSON.stringify({mode:'ping', lite:true})});
     const j=JSON.parse(await res.text());
     return !!j.ok;
   }catch(e){ return false; }
@@ -742,8 +770,16 @@ async function submitReal(){
   }
   _sending=true; btn.disabled = true; btn.textContent = '送信中…';
   try{
-    const r = await postToGas(p);
+    dbg('送信開始 txId='+p.txId.slice(0,8)+'… 品物'+p.items.length+'点');
+    const _t0=Date.now();
+    const r = await postToGas(p, 45000);   // 帳簿処理が重い日でも応答を待ち切る(45秒)
+    dbg('応答 '+(Date.now()-_t0)+'ms: '+(r.ok?('ok '+(r.nos||[]).join(',')):'error'));
+    if(r.trace) dbg('GASトレース: '+r.trace.join(' → '));
+    if(!r.ok && r.failedStep) dbg('失敗工程: '+r.failedStep);
     if(r.ok){
+      // 呼び出し元の保留・同一txIdの保留を自動削除(残骸防止)
+      const q2=qLoad().filter(q=>!((q.payload&&q.payload.txId&&q.payload.txId===p.txId)||(RECALLED_AT&&q.savedAt===RECALLED_AT)));
+      qSave(q2); RECALLED_AT=null; renderQueueBadge();
       let msg = '管理番号: ' + r.nos.join(', ');
       if(r.warnings && r.warnings.length) msg += '\n\n[注意]\n' + r.warnings.join('\n');
       // 読取を使わなかった場合など未保存の画像があれば、初期化前に保管（最大8秒・失敗しても取引は完了済み）
@@ -762,12 +798,29 @@ async function submitReal(){
       await alertModal('送信完了', msg);
       resetDemo();
     }else{
-      await alertModal('送信エラー', r.error + '\n\nもう一度お試しください。直らない場合は事務所へ連絡。');
+      await alertModal('送信エラー' + (r.failedStep ? '（' + r.failedStep + '）' : ''),
+        r.error + '\n\nもう一度お試しください。直らない場合は事務所へ連絡。');
     }
   }catch(err){
     if(err.isConfig){
       await alertModal('GAS設定エラー', err.message + '\n\n（このエラーは再送しても直りません。保留には入れていません）');
     }else{
+      dbg('通信失敗: '+(err.isTimeout?'45秒タイムアウト':(err.message||err)));
+      // v6.6: タイムアウト時はまず「実は転記済みか」をGASに照会(応答だけ落ちた場合を自動判定)
+      if(err.isTimeout){
+        btn.textContent = '転記状況を確認中…';
+        try{
+          const st = await postToGas({mode:'txstatus', txIds:[p.txId]}, 20000);
+          const me = st.ok && st.results && st.results[p.txId];
+          if(me && me.written){
+            dbg('照会結果: 転記済み '+me.nos.join(','));
+            _txStatusCache[p.txId]=me;
+            await alertModal('送信は完了していました', '応答は届きませんでしたが、GAS側で転記が確認できました。\n管理番号: '+me.nos.join(', ')+'\n（保留には入れていません。このまま次の取引へ進めます）');
+            resetDemo(); return;
+          }
+          dbg('照会結果: 未転記→保留へ');
+        }catch(e2){ dbg('照会も失敗: '+(e2.message||e2)); }
+      }
       const queue = qLoad();
       queue.push({ savedAt: new Date().toISOString(), payload: p });
       qSave(queue); renderQueueBadge();
@@ -775,7 +828,7 @@ async function submitReal(){
       btn.textContent = '原因を診断中…';
       const reachable = await quickPing();
       const diag = err.isTimeout
-        ? '原因: 15秒以内に応答がありませんでした（回線が遅い/不安定）'
+        ? '原因: 45秒以内に応答がありませんでした。ただし送信自体はGASに届いて処理されている場合があります。このフォームの再送は同じ取引を二重転記しない仕組みのため、そのまま「保留分を再送」で安全に確定できます'
         : reachable
           ? '診断: GASへの疎通は正常です。一時的な通信エラーの可能性が高く、再送すればそのまま通る見込みです'
           : '診断: GASに到達できません。①電波 ②広告ブロッカー等がgoogle.comへの通信を遮断していないか ③GASのデプロイ設定 を確認してください';
@@ -797,8 +850,10 @@ async function resendQueue(){
   const orig=b.innerHTML; b.innerHTML=IC.spin+' 再送中…（'+queue.length+'件）';
   const remain = []; let done = 0; let configErr=null;
   for(const q of queue){
-    try{ const r = await postToGas(q.payload); if(r.ok) done++; else remain.push(q); }
-    catch(e){ remain.push(q); if(e.isConfig) configErr=e.message; }
+    try{ const r = await postToGas(q.payload, 45000);
+      if(r.ok){ done++; dbg('再送成功: '+(r.nos||[]).join(',')+((r.warnings||[]).some(w=>w.indexOf('[冪等]')===0)?'(転記済みの確定)':'')); }
+      else { remain.push(q); dbg('再送エラー: '+(r.failedStep?'['+r.failedStep+'] ':'')+r.error); } }
+    catch(e){ remain.push(q); dbg('再送通信失敗: '+(e.message||e)); if(e.isConfig) configErr=e.message; }
   }
   qSave(remain); 
   _resending=false; b.innerHTML=orig; renderQueueBadge();
@@ -807,7 +862,104 @@ async function resendQueue(){
   else if(remain.length) msg+='\n（電波の良い場所で再度お試しください）';
   await alertModal('再送結果', msg);
 }
+// ===== v6.6 保留ビューア: 中身の確認・転記状況の照会・フォームへの呼び出し =====
+let _txStatusCache = {};   // txId → {written, nos, time}
+function escH(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function _qSummary(q, i){
+  const p=q.payload||{}, items=p.items||[];
+  const gd=items.reduce((s,it)=>s+(+it.gd||0)*1,0);
+  const when=(q.savedAt||'').replace('T',' ').slice(5,16);
+  const st=_txStatusCache[p.txId];
+  const stTxt = !p.txId ? '<b style="color:var(--shu);">旧形式(txIdなし)・再送で重複の恐れ</b>'
+    : st===undefined ? '未確認(「転記状況を確認」を押す)'
+    : st.written ? '<b style="color:var(--shu);">転記済み '+st.nos.join(',')+'('+st.time+')→破棄推奨</b>'
+    : '<b style="color:var(--ok,#2e7d32);">未転記→呼び出し/再送OK</b>';
+  return '<div style="border:1px solid var(--line,#ccc);border-radius:8px;padding:8px;margin-bottom:8px;font-size:12.5px;line-height:1.6;">'
+    + '<b>'+(i+1)+'. '+escH(p.buyer||'?')+'（'+escH(p.genba||'?')+'）</b> '+items.length+'点 下代¥'+gd.toLocaleString()+'<br>'
+    + '保存: '+when+'　状況: '+stTxt+'<br>'
+    + '<button class="sec" style="font-size:12px;padding:5px 10px;margin-top:4px;" onclick="recallFromQueue('+i+')">フォームに呼び出す</button> '
+    + '<button class="sec" style="font-size:12px;padding:5px 10px;margin-top:4px;" onclick="deleteFromQueue('+i+')">この1件を削除</button>'
+    + '</div>';
+}
+async function openQueueViewer(){
+  const queue=qLoad();
+  if(!queue.length){ await alertModal('保留なし','保留中の送信はありません。'); return; }
+  const html=queue.map((q,i)=>_qSummary(q,i)).join('');
+  const act=await _dlgHtml('保留中の送信（'+queue.length+'件）', html,
+    [{label:'転記状況を確認', value:'check', sec:true},{label:'閉じる', value:'close'}]);
+  if(act==='check'){ await checkQueueStatus(); openQueueViewer(); }
+}
+async function checkQueueStatus(){
+  const ids=qLoad().map(q=>(q.payload||{}).txId).filter(Boolean);
+  if(!ids.length) return;
+  try{
+    const r=await postToGas({mode:'txstatus', txIds:ids}, 20000);
+    if(r.ok) Object.assign(_txStatusCache, r.results||{});
+  }catch(e){ await alertModal('照会失敗','転記状況を取得できませんでした: '+(e.message||e)); }
+}
+async function recallFromQueue(i){
+  const bg=document.getElementById('dlgBg'); bg.classList.remove('show'); _dlgResolve=null;
+  const q=qLoad()[i]; if(!q) return;
+  const p=q.payload||{};
+  const st=_txStatusCache[p.txId];
+  if(st && st.written){
+    if(!(await confirmModal('転記済みの取引です','この取引は既に '+st.nos.join(',')+' で転記済みです。呼び出して再送信しても二重転記はされません（同じ管理番号が返るだけ）。\n内容を修正して送るとその修正は帳簿に反映されない点に注意してください。呼び出しますか？'))) return;
+  }
+  if(!p.txId){
+    if(!(await confirmModal('旧形式の保留です','この保留は旧バージョンで保存されたため転記済みか自動判定できません。帳簿を目視確認してから送信してください。呼び出しますか？'))) return;
+  }
+  TX_ID = p.txId || newTxId();
+  RECALLED_AT = q.savedAt || null;
+  setV('buyer',p.buyer); setV('genba',p.genba); setV('channel',p.channel); if(typeof updateConv==='function')updateConv();
+  setV('taiou',p.taiou); setV('promo',p.promo); setV('biko',p.biko);
+  const per=p.person||{};
+  setV('p_name',per.name); setV('p_zip',per.zip); setV('p_banchi',per.banchi); setV('p_birth',per.birth);
+  setV('p_method',per.method||'免許証'); setV('p_shokugyo',per.shokugyo); setV('p_num',per.num);
+  document.getElementById('items').innerHTML='';
+  (p.items||[]).forEach(it=>{
+    const pr={genre:it.genre, oroshi:it.oroshi, brand:it.brand, line:it.line, iname:it.iname,
+      wt:it.wt, yosoku:it.yosoku, qty:it.qty, jd:it.jd, gd:it.gd};
+    if(it.genre==='金券類'){
+      pr.ktype=it.ktype||'テレホンカード';
+      if(pr.ktype==='テレホンカード'){ if(it.kdofree){pr.kdo='その他度数'; pr.kdofree=it.kdofree;} else pr.kdo=it.detail||'50度数'; }
+      else pr.kfree=it.detail||'';
+    }
+    if(it.genre==='古銭') pr.kosen=it.detail||'';
+    addItem(pr);
+  });
+  recalc(); dbg('保留#'+(i+1)+'をフォームへ呼び出し(txId='+TX_ID.slice(0,8)+'…)');
+  window.scrollTo({top:0, behavior:'smooth'});
+  await alertModal('呼び出しました','保留の内容をフォームに展開しました。確認・修正のうえ「送信する」を押してください。\n送信が成功するとこの保留は自動で消えます。');
+}
+async function deleteFromQueue(i){
+  const bg=document.getElementById('dlgBg'); bg.classList.remove('show'); _dlgResolve=null;
+  if(!(await confirmModal('保留の削除','保留'+(i+1)+'件目を端末から削除します。帳簿には送信されません。よろしいですか？'))) return;
+  const queue=qLoad(); queue.splice(i,1); qSave(queue); renderQueueBadge();
+  if(queue.length) openQueueViewer();
+}
+function setV(id,v){const e=document.getElementById(id); if(e) e.value=(v==null?'':v);}
+
+// ===== v6.6 画面内デバッグログ(デバッグ版のみ) =====
+const _dbgLines=[];
+function dbg(msg){
+  const t=new Date().toTimeString().slice(0,8);
+  _dbgLines.push(t+' '+msg); if(_dbgLines.length>60)_dbgLines.shift();
+  try{console.log('[MUSE]',msg);}catch(e){}
+  const el=document.getElementById('dbgLog');
+  if(el){ el.textContent=_dbgLines.join('\n'); el.scrollTop=el.scrollHeight; }
+}
+
+async function discardQueue(){
+  const n=qLoad().length;
+  if(!n){ await alertModal('保留なし','破棄する保留はありません。'); return; }
+  if(!(await confirmModal('保留分の破棄', '保留中の'+n+'件を端末から削除します。帳簿には送信されません。\n（既にSlack報告や帳簿転記が確認できている取引の残骸を消す場合に使用）\nよろしいですか？'))) return;
+  qSave([]); renderQueueBadge();
+  await alertModal('破棄しました','保留はすべて削除されました。');
+}
 function renderQueueBadge(){
+  const n_=qLoad().length;
+  const d=document.getElementById('discardBtn'); if(d) d.style.display = n_ ? 'block' : 'none';
+  const qv=document.getElementById('queueViewBtn'); if(qv) qv.style.display = n_ ? 'block' : 'none';
   const el=document.getElementById('qbadge'); if(!el) return;
   const n=qLoad().length;
   el.style.display = n? 'inline-flex':'none';
