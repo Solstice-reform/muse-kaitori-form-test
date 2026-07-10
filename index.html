@@ -1,1047 +1,1004 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MUSE 買取入力 v6.6（デバッグ）</title>
-<style>
-  :root{
-    /* 紙とはんこ: 背景=自社伝票のクリーム紙 / 墨 / 常磐緑(屋号) / 朱肉(警告のみ) */
-    --paper:#F3EFE7; --card:#FFFFFF; --ink:#20303F; --ink2:#6B7280; --rule:#DFD8C8;
-    --tokiwa:#0E6B52; --tokiwa-d:#0A523F; --tokiwa-bg:#E4F0EA; --tokiwa-line:#B9D8CB;
-    --shu:#B23B2E; --shu-bg:#F9E9E6;
-    --ocr:#8C4A1E; --ocr-bg:#F6E9DA; --ocr-line:#E3C39F;
-    --form-bg:#FBF4DC; --form-line:#E4D18F;
-    --r:14px;
-  }
+/************************************************************************
+ * MUSE 買取自動入力システム  GAS本体  v3.4（Slack添付の完全化）
+ * ---------------------------------------------------------------------
+ * v3.4: OCR未使用時にSlack添付が商品画像だけになる問題の恒久修正
+ *  ・原因: 伝票/身分証のDrive保存はOCR実行時に行われるため、OCR停止中や
+ *    手入力運用では送信時点でfileIdが無く、Slackキューに商品画像しか載らなかった
+ *    （送信成功後の後追い保存はDriveには入るがキュー行に反映されなかった）
+ *  ・修正: 後追い保存(mode:'upload'+assignNo)がキューの未投稿行に画像を合流。
+ *    伝票/身分証が来る見込みの行は 'hold' 状態で最大3分待ってから投稿
+ *    （後追い保存は通常3〜8秒で完了するため、実際の待ちはほぼ発生しない）
+ * ---------------------------------------------------------------------
+ * v3.3: どこで失敗したかを必ず追える仕組み（応答がタイムアウトで消えても残る）
+ *  ・ステップトレース: doPostが各工程の所要msを記録し応答に同梱（trace）。
+ *    エラー時は「[◯◯で失敗]」と工程名がエラーメッセージ先頭に付く
+ *  ・_DebugLog: 古物台帳ブック内の非表示シートに全取引のトレース／エラーを
+ *    永続記録（クライアントがタイムアウトして応答を受け取れなくても事後確認可能）
+ *  ・mode:'txstatus': txId配列を受け、_TxLogと突合して転記済みか＋管理番号を返す
+ *    → フォームv6.6がタイムアウト直後に自動照会し「実は転記済み」を即座に判定
+ * ---------------------------------------------------------------------
+ * v3.2: タイムアウト再送による二重転記の恒久対策（2026-07-10 実地デバッグ反映）
+ *  ・冪等化: フォームが発行する txId を _TxLog（古物台帳ブック内・非表示）に記録。
+ *    同一txIdの再送は一切書き込まず、初回の管理番号をそのまま返す（安全な再送）
+ *  ・軽量ping: {mode:'ping', lite:true} は帳簿を開かず即応答
+ *    （従来pingは4ブックを開くため5秒診断が常に失敗し「GASに到達できません」と
+ *     誤診していた。接続テストページの詳細確認は従来pingのまま）
+ *  ・対応フォームは v6.5 以降（v6.4以前のフォームはtxIdなし＝冪等化対象外）
+ * ---------------------------------------------------------------------
+ * v3.0: Drive保存＋Slack決済報告（実体添付）＋自動整理
+ *  ・OCR時に伝票/身分証をDrive一時保管へ保存（+1〜2秒・fileIdを返却）
+ *  ・商品画像は mode:'upload' で撮影直後に裏で保存（誰も待たない）
+ *  ・送信成功時に管理番号でリネームし 年/月/種別 フォルダへ自動移動
+ *  ・Slackは送信処理から分離: キュー→1分毎トリガーで実体添付投稿
+ *    （送信の応答速度2〜3秒を維持。投稿は最大1分後）
+ *  ・夜間クリーンアップ: 一時保管48時間で削除／3年超の月フォルダ削除
+ *  【初期設定】runSetup() を1回実行（トリガー3本を自動作成）
+ *  【スクリプトプロパティ】ANTHROPIC_API_KEY（必須）
+ *    SLACK_BOT_TOKEN / SLACK_CHANNEL_ID（決済報告用・未設定ならSlackスキップ）
+ *    SLACK_ALERT_CHANNEL_ID（本人確認アラート用・任意）
+ *  【公開リポ安全版】トークン類はすべてスクリプトプロパティで管理。
+ *    このファイルには秘密情報を一切含まない（GitHub等に置いてよい版）
+ * ---------------------------------------------------------------------
+ * v2.2: 実サンプル（手書き伝票＋マイナンバーカード）での検証を反映
+ *  ・伝票から郵便番号・生年月日・職業も読取（伝票のご記入欄に記載があるため）
+ *  ・身分証の種別を自動判定（免許証/マイナンバーカード/保険証等→確認の方法へ）
+ *  ・マイナンバーカードの個人番号は絶対に読み取らない（番号法対応）
+ *  ・丁目番地号は算用数字に正規化（四丁目21番地13→4-21-13）建物名は末尾
+ * v2.1: 一括OCR実装（mode:'ocr'）
+ *  ・伝票＋免許証を1リクエストでClaude Haiku 4.5に読取依頼（片方のみ可）
+ *  ・画像種別の自動判定（伝票/免許証の取り違え・不鮮明を検知）
+ *  ・伝票の顧客名×免許証氏名の突合チェック（取り違え防止）
+ *  ・APIキーはスクリプトプロパティ「ANTHROPIC_API_KEY」に保管
+ *    （設定: エディタ左の⚙プロジェクトの設定→スクリプトプロパティ→追加）
+ * ---------------------------------------------------------------------
+ * v1系からの修正点（マッピング表v3・要件定義書v1.1）
+ *  [1] 追記位置: getLastRow/appendRow 禁止 → A列(買取日)とNo.列が
+ *      両方空の最初の行を走査（数式プレフィル行対策）
+ *  [2] 採番: No.列全走査のMAX+1（最終行参照禁止・既存重複24件対策）
+ *  [3] ヘッダー解決: NFKC正規化＋空白/記号除去＋別名表
+ *      （買取日]・予想上代・重量(ｇ)・　卸先・上代（買取相場×0.7）等を吸収）
+ *  [4] 買取伝票: No.列 J〜AM = No.1〜No.30（従来の21は誤り）
+ *  [5] 数式委任: シート数式が存在する列には一切書き込まない
+ *      古物台帳: S粗利/U卸先住所/V区分/Z〜AC再掲/AD住所
+ *      商品登録: P買取相場/T粗利  買取伝票: 粗利行
+ *  [6] 対応方法(催事/出張)をフォームから受領（既定=催事）
+ *  [7] テレカ「その他度数」対応（detail=自由入力度数・上代は手入力値）
+ ************************************************************************/
 
+/* ==================== 設定（管理マスターv1.1と常に一致させる） ==================== */
 
-  .dlg-bg{position:fixed;inset:0;background:rgba(32,48,63,.55);display:none;align-items:center;justify-content:center;z-index:99;padding:16px;}
-  .dlg-bg.show{display:flex;}
-  .dlg{background:#fff;border-radius:14px;max-width:420px;width:100%;padding:18px;box-shadow:0 12px 40px rgba(0,0,0,.28);}
-  .dlg h4{margin:0 0 10px;font-size:15px;display:flex;align-items:center;gap:8px;}
-  .dlg pre{white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.7;margin:0 0 14px;color:#333;max-height:45vh;overflow:auto;}
-  .dlg .btns{display:flex;gap:9px;}
-  .dlg button{flex:1;padding:12px;border:0;border-radius:9px;font-size:14px;font-weight:700;font-family:inherit;cursor:pointer;}
-  .dlg button.pri{background:var(--tokiwa);color:#fff;}
-  .dlg button.sec{background:#EEEAE0;color:var(--ink);}
-  .gasdot{margin-left:10px;width:11px;height:11px;border-radius:50%;background:#8a97a3;border:2px solid rgba(243,239,231,.5);padding:0;cursor:pointer;flex-shrink:0;align-self:center;}
-  .gasdot.ok{background:#3FB58B;} .gasdot.ng{background:#E06A5B;}
-  .qbadge{display:inline-flex;min-width:18px;height:18px;border-radius:9px;background:var(--shu);color:#fff;
-    font-size:11px;font-weight:800;align-items:center;justify-content:center;padding:0 5px;margin-left:6px;vertical-align:middle;}
-  .ic{width:1.1em;height:1.1em;vertical-align:-0.18em;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;}
-  .ic.spin{animation:icsp 1s linear infinite;}
-  @keyframes icsp{to{transform:rotate(360deg)}}
-  .ocrnotes{background:var(--ocr-bg);border:1px solid var(--ocr-line);border-radius:10px;padding:10px 12px;font-size:12px;color:var(--ocr);margin-bottom:10px;display:none;}
-  .ocrnotes .ln{display:flex;gap:8px;align-items:flex-start;margin:3px 0;}
-  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
-  html{scroll-behavior:smooth;}
-  @media (prefers-reduced-motion:reduce){ html{scroll-behavior:auto;} *{transition:none!important;} }
-  body{margin:0; background:var(--paper); color:var(--ink); line-height:1.6; padding:0 0 108px;
-    font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",YuGothic,Meiryo,sans-serif;
-    background-image:linear-gradient(transparent 31px, rgba(32,48,63,.035) 32px);
-    background-size:100% 32px;}
-  .wrap{max-width:600px; margin:0 auto; padding:0 14px;}
-
-  /* ===== ヘッダー: 帳場の看板 ===== */
-  header.app{background:var(--ink); color:#F3EFE7; padding:13px 16px; position:sticky; top:0; z-index:10;
-    display:flex; align-items:baseline; gap:10px; border-bottom:3px solid var(--tokiwa);}
-  header.app .mark{font-size:17px;}
-  header.app .ttl{font-size:16px; font-weight:800; letter-spacing:.14em;}
-  header.app .sub{font-size:10.5px; color:#9FB0A8; letter-spacing:.06em; margin-left:auto;}
-
-  /* ===== 工程カード ===== */
-  .card{background:var(--card); border-radius:var(--r); padding:16px 15px 15px; margin:16px 0;
-    box-shadow:0 1px 2px rgba(32,48,63,.05), 0 4px 14px rgba(32,48,63,.05); border:1px solid rgba(223,216,200,.6);}
-  .step{display:flex; align-items:baseline; gap:9px; margin:0 0 13px; border-bottom:1px solid var(--rule); padding-bottom:9px;}
-  .step .no{font-size:11px; font-weight:800; color:var(--tokiwa); letter-spacing:.22em; font-variant-numeric:tabular-nums;}
-  .step h2{font-size:15.5px; margin:0; font-weight:800; letter-spacing:.1em;}
-  .step .hint{font-weight:500; font-size:11px; color:var(--ink2); margin-left:auto; letter-spacing:0;}
-
-  /* ===== 工程01: 撮影行 ===== */
-  .docrow{border:1px solid var(--rule); border-radius:11px; padding:10px 11px; margin-bottom:9px; background:#FDFCF9;}
-  .dochead{display:flex; align-items:center; gap:8px;}
-  .doclbl{font-size:13.5px; font-weight:700; letter-spacing:.04em;}
-  .doclbl .req{font-size:10px; color:var(--shu); font-weight:700; margin-left:2px;}
-  .chip{font-size:10.5px; font-weight:700; padding:2px 9px; border-radius:20px; background:#EEEAE0; color:var(--ink2); letter-spacing:.04em;}
-  .chip.on{background:var(--tokiwa-bg); color:var(--tokiwa-d); border:1px solid var(--tokiwa-line);}
-  .docbtns{margin-left:auto; display:flex; gap:7px;}
-  .docbtns button{width:46px; height:40px; border:1.5px solid var(--rule); border-radius:9px; background:#fff;
-    font-size:17px; cursor:pointer; display:flex; align-items:center; justify-content:center; color:var(--ink);}
-  .docbtns button:active{background:var(--tokiwa-bg); border-color:var(--tokiwa);}
-  .thumbs{display:flex; gap:8px; flex-wrap:wrap; margin-top:9px;}
-  .thumbs:empty{margin-top:0;}
-  .thumbs .th{position:relative;}
-  .thumbs img{width:72px; height:72px; object-fit:cover; border-radius:8px; border:1px solid var(--rule); display:block;}
-  .thumbs .del{position:absolute; top:-7px; right:-7px; width:22px; height:22px; border-radius:50%; border:2px solid #fff;
-    background:var(--shu); color:#fff; font-size:11px; line-height:1; cursor:pointer;}
-
-  .ocrbar{margin-top:11px;}
-  .ocrbar button{width:100%; padding:14px; border:0; border-radius:11px; background:var(--ink); color:#F3EFE7;
-    font-size:14.5px; font-weight:800; letter-spacing:.05em; cursor:pointer; font-family:inherit;}
-  .ocrbar button:disabled{background:#C9C3B6; color:#fff;}
-  .ocrbar button:focus-visible{outline:3px solid var(--tokiwa); outline-offset:2px;}
-  .ocrnote{font-size:11px; color:var(--ink2); margin-top:6px; text-align:center;}
-
-  /* ===== 入力部品 ===== */
-  label.field{display:block; margin:0 0 12px;} label.field:last-child{margin-bottom:0;}
-  label.field .lbl{display:block; font-size:12.5px; font-weight:700; margin-bottom:5px; letter-spacing:.03em;}
-  .opt{color:var(--ink2); font-size:10.5px; margin-left:4px; font-weight:500;}
-  input, select{width:100%; padding:11px 11px; font-size:16px; border:1.5px solid var(--rule); border-radius:9px;
-    background:#fff; color:var(--ink); font-family:inherit; appearance:none;}
-  input:focus, select:focus{outline:none; border-color:var(--tokiwa); box-shadow:0 0 0 3px var(--tokiwa-bg);}
-  select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236B7280' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
-    background-repeat:no-repeat; background-position:right 12px center; padding-right:32px;}
-  .grid{display:grid; gap:10px;} .g1{grid-template-columns:1fr;} .g2{grid-template-columns:1fr 1fr;}
-  .sub{font-size:11px; font-weight:700; color:var(--ink2); margin:0 0 4px; letter-spacing:.03em;}
-  .autohint{color:var(--tokiwa-d); font-weight:700; font-size:10px;}
-
-  .note{border-radius:10px; padding:10px 12px; font-size:12px; display:flex; gap:9px; align-items:flex-start; margin:11px 0 0;}
-  .note.ocr{background:var(--ocr-bg); border:1px solid var(--ocr-line); color:var(--ocr);}
-  .note.warn{background:var(--shu-bg); border:1px solid #E5B0A8; color:#7E2A1F;}
-  .note b{font-weight:800;}
-  .convbox{background:var(--tokiwa-bg); border:1px solid var(--tokiwa-line); border-radius:9px; padding:9px 12px;
-    font-size:12px; color:var(--tokiwa-d); margin-top:11px;}
-  .convbox b{font-weight:800;}
-
-  /* ===== 本人確認(折りたたみ) ===== */
-  details.pbox{border:1px solid var(--rule); border-radius:11px; padding:11px 13px; background:#FDFCF9;}
-  details.pbox summary{cursor:pointer; font-size:13.5px; font-weight:700; list-style:none; display:flex; align-items:center; gap:8px;}
-  details.pbox summary::-webkit-details-marker{display:none;}
-  details.pbox summary::before{content:'▸'; color:var(--tokiwa); transition:transform .15s;}
-  details.pbox[open] summary::before{transform:rotate(90deg);}
-  .pgrid{display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-top:12px;}
-  .psum-ok{color:var(--tokiwa-d);} .psum-warn{color:var(--ocr);}
-  .mismatch{background:var(--shu-bg); border:1.5px solid #DE9186; border-radius:10px; padding:11px 13px;
-    font-size:12.5px; color:#7E2A1F; margin-bottom:10px; display:none;}
-
-  /* ===== 品物 ===== */
-  .item{border:1px solid var(--rule); border-radius:12px; padding:12px; margin-bottom:11px; background:#FDFCF9;}
-  .item .ihead{display:flex; align-items:center; gap:8px; margin-bottom:10px;}
-  .item .ino{width:25px; height:25px; border-radius:7px; background:var(--ink); color:#F3EFE7; font-size:12px;
-    font-weight:800; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; font-variant-numeric:tabular-nums;}
-  .item .del{margin-left:auto; background:none; border:none; color:var(--shu); font-size:18px; cursor:pointer; padding:4px 6px;}
-  .pf{font-size:12.5px; font-weight:800; text-align:right; margin-top:7px; color:var(--tokiwa-d); font-variant-numeric:tabular-nums;}
-  .pf.minus{color:var(--shu);}
-  .addrow{width:100%; padding:13px; background:var(--tokiwa-bg); color:var(--tokiwa-d); border:1.5px dashed var(--tokiwa);
-    border-radius:10px; font-size:14px; font-weight:800; cursor:pointer; font-family:inherit; letter-spacing:.05em;}
-  .totals{display:flex; gap:16px; justify-content:flex-end; margin-top:12px; font-size:12.5px; flex-wrap:wrap; color:var(--ink2);}
-  .totals b{font-size:14.5px; color:var(--ink); font-variant-numeric:tabular-nums;} .totals .minus{color:var(--shu);}
-
-  /* ===== 署名要素: 精算バー(粗利ライブ+送信) ===== */
-  .payline{position:fixed; bottom:0; left:0; right:0; z-index:20;
-    background:linear-gradient(transparent, rgba(243,239,231,.94) 26%);
-    padding:18px 14px 14px;}
-  .payline .inr{max-width:600px; margin:0 auto; background:var(--ink); border-radius:15px; padding:11px 12px 11px 17px;
-    display:flex; align-items:center; gap:12px; box-shadow:0 8px 26px rgba(32,48,63,.32); border-top:3px solid var(--tokiwa);}
-  .payline .fig{color:#F3EFE7; line-height:1.25; min-width:0;}
-  .payline .fig .cap{font-size:9.5px; color:#9FB0A8; letter-spacing:.24em; font-weight:700;}
-  .payline .fig .amt{font-size:21px; font-weight:800; font-variant-numeric:tabular-nums; letter-spacing:.01em; white-space:nowrap;}
-  .payline .fig .amt.minus{color:#F0A196;}
-  .payline .fig .cnt{font-size:10.5px; color:#9FB0A8; font-variant-numeric:tabular-nums;}
-  .payline button.go{margin-left:auto; padding:13px 26px; font-size:15.5px; font-weight:800; letter-spacing:.12em;
-    background:var(--tokiwa); color:#fff; border:none; border-radius:11px; cursor:pointer; font-family:inherit; flex-shrink:0;}
-  .payline button.go:active{background:var(--tokiwa-d);}
-  .payline button.go:focus-visible{outline:3px solid #fff; outline-offset:2px;}
-  .payline button.go:disabled{background:#57685F;}
-  .resendln{display:block; text-align:center; margin-top:8px; font-size:11.5px; color:var(--ink2);
-    background:none; border:none; text-decoration:underline; cursor:pointer; width:100%; font-family:inherit;}
-
-  /* ===== 結果プレビュー ===== */
-  #result{display:none;} #result.show{display:block;}
-  .legend{display:flex; gap:14px; flex-wrap:wrap; font-size:11px; margin:10px 0 0;}
-  .legend span{display:inline-flex; align-items:center; gap:5px; color:var(--ink2);}
-  .dot{width:11px; height:11px; border-radius:3px;}
-  .dot.f{background:var(--form-bg); border:1px solid var(--form-line);}
-  .dot.o{background:var(--ocr-bg); border:1px solid var(--ocr-line);}
-  .dot.a{background:var(--tokiwa-bg); border:1px solid var(--tokiwa-line);}
-  .out{margin:14px 0; border:1px solid var(--rule); border-radius:12px; overflow:hidden; background:#fff;}
-  .out .oh{background:var(--ink); color:#F3EFE7; padding:10px 13px; font-size:13px; font-weight:700; display:flex; align-items:center; gap:8px;}
-  .out .oh .n{background:var(--tokiwa); width:20px; height:20px; border-radius:6px; display:inline-flex; align-items:center; justify-content:center; font-size:11px;}
-  .otbl{overflow-x:auto;} .otbl table{border-collapse:collapse; min-width:100%; font-size:12px;}
-  .otbl th{background:#F6F3EC; color:var(--ink2); padding:7px 9px; text-align:left; white-space:nowrap; border-bottom:1px solid var(--rule); font-size:11px;}
-  .otbl td{padding:7px 9px; border-bottom:1px solid #F1EDE3; white-space:nowrap; font-variant-numeric:tabular-nums;}
-  .otbl td.f{background:var(--form-bg);} .otbl td.o{background:var(--ocr-bg);} .otbl td.a{background:var(--tokiwa-bg); color:var(--tokiwa-d); font-weight:700;}
-  .kv{display:grid; grid-template-columns:40% 60%;}
-  .kv>div{padding:8px 12px; font-size:13px; border-top:1px solid var(--rule); word-break:break-all;}
-  .kv .k{color:var(--ink2); background:#FAF8F2; font-weight:700;}
-  .kv .v.f{background:var(--form-bg);} .kv .v.o{background:var(--ocr-bg);} .kv .v.a{background:var(--tokiwa-bg); color:var(--tokiwa-d); font-weight:700;}
-  .slacknote{font-size:12px; color:var(--ink2); padding:9px 13px; background:#FAF8F2;}
-  .slackbox{background:var(--ink); color:#E7EDE9; font-size:12px; padding:13px; border-radius:8px; margin:10px 13px 13px;
-    font-family:"SF Mono",Consolas,monospace; line-height:1.7; white-space:pre-wrap;}
-  pre.json{background:#16222D; color:#CBE6DA; border-radius:8px; padding:12px; font-size:11px; overflow:auto; line-height:1.5;
-    margin:10px 13px 13px; white-space:pre-wrap; word-break:break-all; font-family:ui-monospace,Menlo,monospace;}
-  .reset{display:block; width:100%; padding:12px; margin-top:8px; background:#fff; color:var(--ink2);
-    border:1.5px solid var(--rule); border-radius:10px; font-size:14px; font-weight:700; cursor:pointer; font-family:inherit;}
-</style>
-</head>
-<body>
-<header class="app">
-  <span class="mark"><svg class="ic" viewBox="0 0 24 24" style="width:1.25em;height:1.25em;"><path d="M12 10.5V21M8 21h8"/><path d="M4.5 8.5 19 5l-4.6 5.8z" fill="currentColor" stroke="none"/></svg></span>
-  <span class="ttl">買取かざみどり</span>
-  <span class="sub">デバッグ版・OCR停止中（課金なし）</span>
-  <button class="gasdot" id="gasDot" onclick="showGasStatus()" aria-label="GAS接続状態"></button>
-</header>
-
-<div class="wrap">
-  <div class="note ocr" style="margin:14px 0 0;"><span><svg class="ic" viewBox="0 0 24 24" style="margin-top:2px;"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.6v.01"/></svg></span>
-    <div><b>デバッグモード：OCRは課金回避のため停止中です。</b>本人確認・取引・品物にはサンプル値（小松様の実取引）を入力済み。写真を添付して送信すると、<b>転記／Drive保存／Slack実体添付（#決済報告デバッグチャンネル）</b>を無料でテストできます。実顧客情報を含むため社外共有不可。</div>
-  </div>
-  <div id="form">
-
-    <!-- 工程01 撮る -->
-    <div class="card">
-      <div class="step"><span class="no">工程 01</span><h2>撮る</h2><span class="hint">書類と品物をここに集約</span></div>
-
-      <div class="docrow">
-        <div class="dochead"><span class="doclbl">買取伝票</span><span class="chip" id="chip_denpyo">未添付</span>
-          <span class="docbtns">
-            <button type="button" onclick="pick('denpyo',true)" aria-label="伝票をカメラで撮影"><svg class="ic" viewBox="0 0 24 24"><path d="M3 8.5A1.5 1.5 0 0 1 4.5 7H7l2-3h6l2 3h2.5A1.5 1.5 0 0 1 21 8.5V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="13.2" r="3.4"/></svg></button>
-            <button type="button" onclick="pick('denpyo',false)" aria-label="伝票を写真から選択"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.6" cy="9.6" r="1.7"/><path d="M4 17l5-5 4 4 3-3 4 4"/></svg></button>
-          </span></div>
-        <div class="thumbs" id="th_denpyo"></div>
-        <input type="file" id="file_denpyo_cam" accept="image/*" capture="environment" hidden onchange="onPick(event,'denpyo')">
-        <input type="file" id="file_denpyo_lib" accept="image/*" hidden onchange="onPick(event,'denpyo')">
-      </div>
-
-      <div class="docrow">
-        <div class="dochead"><span class="doclbl">身分証<span class="opt">免許証・マイナンバーカード等</span></span><span class="chip" id="chip_license">未添付</span>
-          <span class="docbtns">
-            <button type="button" onclick="pick('license',true)" aria-label="身分証をカメラで撮影"><svg class="ic" viewBox="0 0 24 24"><path d="M3 8.5A1.5 1.5 0 0 1 4.5 7H7l2-3h6l2 3h2.5A1.5 1.5 0 0 1 21 8.5V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="13.2" r="3.4"/></svg></button>
-            <button type="button" onclick="pick('license',false)" aria-label="身分証を写真から選択"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.6" cy="9.6" r="1.7"/><path d="M4 17l5-5 4 4 3-3 4 4"/></svg></button>
-          </span></div>
-        <div class="thumbs" id="th_license"></div>
-        <input type="file" id="file_license_cam" accept="image/*" capture="environment" hidden onchange="onPick(event,'license')">
-        <input type="file" id="file_license_lib" accept="image/*" hidden onchange="onPick(event,'license')">
-      </div>
-
-      <div class="docrow">
-        <div class="dochead"><span class="doclbl">商品画像<span class="opt">最大3枚</span></span><span class="chip" id="chip_items">未添付</span>
-          <span class="docbtns">
-            <button type="button" onclick="pick('items',true)" aria-label="商品をカメラで撮影"><svg class="ic" viewBox="0 0 24 24"><path d="M3 8.5A1.5 1.5 0 0 1 4.5 7H7l2-3h6l2 3h2.5A1.5 1.5 0 0 1 21 8.5V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="13.2" r="3.4"/></svg></button>
-            <button type="button" onclick="pick('items',false)" aria-label="商品を写真から選択"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.6" cy="9.6" r="1.7"/><path d="M4 17l5-5 4 4 3-3 4 4"/></svg></button>
-          </span></div>
-        <div class="thumbs" id="th_items"></div>
-        <input type="file" id="file_items_cam" accept="image/*" capture="environment" hidden onchange="onPick(event,'items')">
-        <input type="file" id="file_items_lib" accept="image/*" multiple hidden onchange="onPick(event,'items')">
-      </div>
-
-      <div class="ocrbar">
-        <button id="ocrBtn" onclick="runOcr()" disabled><svg class="ic" viewBox="0 0 24 24"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16M4 12h16"/></svg> 画像を添付すると読取できます</button>
-        <div class="ocrnote">伝票・身分証どちらか1枚だけでも読取できます。2枚まとめてなら氏名の突合チェック付き。</div>
-      </div>
-    </div>
-
-    <!-- 工程02 取引 -->
-    <div class="card">
-      <div class="step"><span class="no">工程 02</span><h2>取引</h2><span class="hint">読取で自動入力・修正可</span></div>
-      <div class="grid g2">
-        <label class="field"><span class="lbl">担当（バイヤー）</span>
-          <select id="buyer">
-            <option value="" selected>選択してください</option>
-            <option>八嶋真司</option><option>筒井涼介</option><option>藤原慶俊</option><option>袖井貢</option><option>原田峰行</option>
-          </select></label>
-        <label class="field"><span class="lbl">現場名</span>
-          <input id="genba" value="" placeholder="例：湯河原"></label>
-      </div>
-      <div class="grid g2" style="margin-top:10px;">
-        <label class="field"><span class="lbl">きっかけ</span>
-          <select id="channel" onchange="updateConv()">
-            <option value="" selected>選択してください</option>
-            <option>折込</option><option>ポスティング</option><option>声掛</option>
-            <option>紹介</option><option>看板</option><option>再来</option><option>その他</option>
-          </select></label>
-        <label class="field"><span class="lbl">対応方法<span class="opt">必ず確認</span></span>
-          <select id="taiou">
-            <option selected>催事</option><option>出張</option>
-          </select></label>
-      </div>
-      <div class="note warn"><span><svg class="ic" viewBox="0 0 24 24" style="margin-top:2px;"><path d="M12 3.5 2.5 20h19z"/><path d="M12 9.5v5M12 17.4v.01"/></svg></span>
-        <div>訪問購入のときは必ず<b>「出張」に切替</b>。催事のまま送ると台帳の対応方法が誤記録になります。</div>
-      </div>
-      <div class="convbox" id="conv"></div>
-    </div>
-
-    <!-- 工程03 本人確認 -->
-    <div class="card">
-      <div class="step"><span class="no">工程 03</span><h2>本人確認</h2><span class="hint">読取で自動入力・要目視確認</span></div>
-      <div class="mismatch" id="mismatchBox"></div>
-      <div class="ocrnotes" id="ocrNotes"></div>
-      <details class="pbox" id="personBox">
-        <summary><span id="personSum">本人確認の入力内容（タップで開く・読取後は自動入力済み）</span></summary>
-        <div class="pgrid">
-          <label class="field"><span class="lbl">氏名 <span class="opt" style="color:var(--shu);">必須</span></span><input id="p_name" placeholder="例：山田　太郎"></label>
-          <label class="field"><span class="lbl">郵便番号</span><input id="p_zip" inputmode="numeric" placeholder="例：259-0301"></label>
-          <label class="field"><span class="lbl">丁目番地号</span><input id="p_banchi" placeholder="例：4-21-13 建物名"></label>
-          <label class="field"><span class="lbl">生年月日（和暦）</span><input id="p_birth" placeholder="例：昭和24年10月16日"></label>
-          <label class="field"><span class="lbl">職業</span>
-            <select id="p_shokugyo"><option value=""></option><option>会社員</option><option>自営業</option><option>主婦</option><option>なし</option><option>その他</option></select></label>
-          <label class="field"><span class="lbl">確認の方法</span>
-            <select id="p_method"><option selected>免許証</option><option>保険証</option><option>マイナンバーカード</option><option>運転経歴書</option><option>在留カード</option><option>その他</option><option>無し</option></select></label>
-          <label class="field" style="grid-column:1/-1;"><span class="lbl">番号<span class="opt">免許証番号など。マイナンバーは記録禁止のため空欄</span></span><input id="p_num" placeholder="例：0000 0000 0000"></label>
-          <div style="grid-column:1/-1;font-size:11px;color:var(--ink2);" id="p_addr_note"></div>
-        </div>
-      </details>
-    </div>
-
-    <!-- 工程04 品物 -->
-    <div class="card">
-      <div class="step"><span class="no">工程 04</span><h2>品物</h2><span class="hint">ジャンルで欄が変化・何点でも</span></div>
-      <div id="items"></div>
-      <button class="addrow" onclick="addItem()">＋ 品物を追加</button>
-      <div class="totals">
-        <span>上代計 <b id="tJ">¥0</b></span><span>下代計 <b id="tG">¥0</b></span><span>粗利計 <b id="tP">¥0</b></span>
-      </div>
-    </div>
-
-    <!-- 補足 -->
-    <div class="card">
-      <div class="step"><span class="no">補足</span><h2>販促・備考</h2><span class="hint">任意</span></div>
-      <div class="grid g2">
-        <label class="field"><span class="lbl">販促品</span><input id="promo" placeholder="例：リピクーポン"></label>
-        <label class="field"><span class="lbl">備考</span><input id="biko" placeholder=""></label>
-      </div>
-    </div>
-  </div>
-
-  <!-- 結果 -->
-  <div id="result">
-    <div class="card" style="background:var(--tokiwa-bg); border-color:var(--tokiwa-line);">
-      <div class="step" style="border-color:var(--tokiwa-line);"><span class="no">確認</span><h2 style="color:var(--tokiwa-d);">各シートへの反映</h2></div>
-      <p style="font-size:13px; margin:0; color:var(--tokiwa-d);">この内容がGASへ送られ、4帳簿＋Slackへ展開されます。</p>
-      <div class="legend"><span><i class="dot f"></i>フォーム入力</span><span><i class="dot o"></i>写真読取</span><span><i class="dot a"></i>自動</span></div>
-    </div>
-    <div id="outputs"></div>
-    <button class="reset" onclick="resetDemo()"><svg class="ic" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v4h-4"/></svg> 次の買取を入力する</button>
-  </div>
-</div>
-
-<!-- 精算バー: 粗利ライブ＋送信 -->
-<div class="payline" id="submitBar"><div class="inr">
-  <div class="fig">
-    <div class="cap">粗利計</div>
-    <div class="amt" id="sbP">¥0</div>
-    <div class="cnt" id="sbN">0点</div>
-  </div>
-  <button class="go" onclick="submitReal()">送信する</button>
-</div>
-<button class="resendln" id="resendBtn" onclick="resendQueue()"><svg class="ic" viewBox="0 0 24 24"><path d="M5 9a10 10 0 0 1 14 0M8 12.5a6 6 0 0 1 8 0"/><circle cx="12" cy="17" r="1.4"/><path d="M12 18.4V21"/></svg> 圏外時の保留分を再送する<span class="qbadge" id="qbadge" style="display:none;"></span></button>
-<button class="resendln" id="queueViewBtn" onclick="openQueueViewer()" style="display:none;"><svg class="ic" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg> 保留の中身を見る・呼び出す</button>
-<button class="resendln" id="discardBtn" onclick="discardQueue()" style="display:none;"><svg class="ic" viewBox="0 0 24 24"><path d="M5 7h14M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 7M7 7l1 13h8l1-13M10 11v6M14 11v6"/></svg> 保留分を破棄する</button>
-<details style="margin-top:10px;font-size:11px;color:var(--ink2);">
-  <summary style="cursor:pointer;">デバッグログ（送信の内部動作・GASトレース）</summary>
-  <pre id="dbgLog" style="max-height:180px;overflow:auto;background:rgba(0,0,0,.05);border-radius:8px;padding:8px;white-space:pre-wrap;word-break:break-all;margin-top:6px;"></pre>
-</details>
-</div>
-
-<script>
-
-// ===== SVGアイコン =====
-const IC = {
-  camera:'<svg class="ic" viewBox="0 0 24 24"><path d="M3 8.5A1.5 1.5 0 0 1 4.5 7H7l2-3h6l2 3h2.5A1.5 1.5 0 0 1 21 8.5V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="13.2" r="3.4"/></svg>',
-  photo:'<svg class="ic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.6" cy="9.6" r="1.7"/><path d="M4 17l5-5 4 4 3-3 4 4"/></svg>',
-  close:'<svg class="ic" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
-  scan:'<svg class="ic" viewBox="0 0 24 24"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16M4 12h16"/></svg>',
-  spin:'<svg class="ic spin" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/></svg>',
-  warn:'<svg class="ic" viewBox="0 0 24 24"><path d="M12 3.5 2.5 20h19z"/><path d="M12 9.5v5M12 17.4v.01"/></svg>',
-  info:'<svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.6v.01"/></svg>',
-  wave:'<svg class="ic" viewBox="0 0 24 24"><path d="M5 9a10 10 0 0 1 14 0M8 12.5a6 6 0 0 1 8 0"/><circle cx="12" cy="17" r="1.4"/><path d="M12 18.4V21"/></svg>',
-  reset:'<svg class="ic" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v4h-4"/></svg>',
-  check:'<svg class="ic" viewBox="0 0 24 24"><path d="M4 12.5l5 5L20 6.5"/></svg>'
+const CONFIG = {
+  SS: {
+    KOBUTSU: '19egdskhJHypIz2OYbVtBEi7-LTyYYbhfDTlyfb44He8', // 古物台帳【MUSE】
+    SHOHIN:  '1888EaIrvlc2viPm1aq4vk5x5hjp7GnlTn5Z_htyUBv8', // 商品登録シート『MUSE』
+    ZAIKO:   '',                                              // ★MUSE在庫管理表: ID未提供（要確認）。空なら在庫転記をスキップ＋警告
+    DENPYO:  '1BE83E_dycFU-ET06ulsCUguHrqyFO4SMQ5R7QLoHJJA'  // MUSE買取伝票シート
+  },
+  HEADER_ROW: { KOBUTSU: 3, SHOHIN: 8, ZAIKO: 3 },
+  DENPYO_NO_COLS: { FIRST: 10, LAST: 39 },   // J=No.1 〜 AM=No.30（実測・v3確定）
+  VALID: {
+    nyuryu:  ['折込','ポス','声掛','再来','看板','紹介','その他'],
+    kakunin: ['免許証','保険証','マイナンバーカード','その他','運転経歴書','在留カード','無し'],
+    shokugyo:['会社員','自営業','主婦','なし','その他'],
+    taiou:   ['催事','出張'],
+    route:   ['【折込】新規','【ポス】新規','【キャッチ】新規','看板','今週リピーター','紹介',
+              '【折込】過去リピーター','【ポス】過去リピーター','【キャッチ】過去リピーター'],
+    kekka:   ['成約','不成約']
+  },
+  TELECA_UNIT: { '50度数': 400, '105度数': 800 },
+  KIKINZOKU_RATE: 0.9,
+  GENRE_OROSHI: { '貴金属':'貴金属', 'カメラ':'ウルトラカメラ', '金券類':'チケッティ', '古銭':'ワタル' },
+  ZAIKO_TARGET_VENDORS: ['グランチャ','グランチャ宝石'],
+  DEFAULT_CHECK: 'BO',  // ☑列の既定値（Phase3検品とは別物）
+  DRIVE: {
+    ROOT: 'MUSE_取引記録',       // Driveの保存ルート（自動作成）
+    TEMP: '一時保管',            // 送信前の仮置き（48時間で自動削除）
+    RETENTION_YEARS: 3,          // 古物台帳の法定保存に合わせる
+    TEMP_RETENTION_HOURS: 48
+  },
+  SLACK_QUEUE_SHEET: '_SlackQueue'  // 古物台帳ブック内に自動作成（非表示）
 };
 
-// ===== マスタ（管理マスターv1.1と一致） =====
-const GENRES=["貴金属","宝石","バッグ","小物","時計","カメラ","金券類","古銭","お酒","その他"];
-const BRANDS=["","Lv","CHANEL","Burberry","BVLGARI","Cartier","CELINE","CITIZEN","COACH","Dior","dunhill","Enicar","FENDI","Ferragamo","GIVENCHY","GUCCI","HERMES","Longines","miu miu","OMEGA","POLO RALPH LAUREN","PRADA","RADO","ROLEX","SAINT LAURENT","SEIKO","Swarovski","TAG Heuer","Tiffani&Co.","Vivienne Westwood","Chloe","DIESEL","VALENTINO"];
-const LINES=["","モノグラム","ダミエ","エピ","ヴェルニ","モノグラム アンプラント","マヒナ","タイガ","スハリ","モノグラム マカサー","モノグラム デニム","モノグラムミニ","モノグラムマルチカラー"];
-const TELECA_DO=["50度数","105度数","その他度数"];
-const KOSEN=["","100円銀貨","1,000円銀貨","50銭　旭竜銀貨","50銭　竜銀貨","50銭　旭日銀貨","50銭　小丸鳳凰銀貨","20銭　旭竜銀貨","20銭　竜銀貨","20銭　旭日銀貨","10銭　旭竜銀貨","10銭　竜銀貨","10銭　旭日銀貨","天保通宝","1円銀貨","1964年ケネディー1/2ドル","1965-1969年ケネディー1/2ドル"];
-const OROSHI=["グランチャ","グランチャ宝石","貴金属","田村敏男","ブランドＫ","チケッティ","ワタル","ウルトラカメラ","エルミタージュ","STYLE","オークション","色石BANK","タグ無し"];
-const GENRE_OROSHI={ "貴金属":"貴金属", "カメラ":"ウルトラカメラ", "金券類":"チケッティ", "古銭":"ワタル" };
-const TELECA_UNIT={ "50度数":400, "105度数":800 };
-const KIKINZOKU_RATE=0.9;
-const LAYOUT={
-  "貴金属":{weight:true,itemname:true}, "宝石":{weight:true,itemname:true},
-  "バッグ":{brand:true,line:true,itemname:true}, "小物":{brand:true,line:true,itemname:true},
-  "時計":{brand:true,itemname:true}, "カメラ":{itemname:true}, "金券類":{kinken:true},
-  "古銭":{kosen:true,itemname:true}, "お酒":{itemname:true}, "その他":{itemname:true}
+// 現役5名。氏名表記は古物台帳実データで全行確認済み（2026-07-08）
+const BUYERS = {
+  '八嶋真司': { key:'八嶋', prefix:'YS', denpyoSheet:'八嶋伝票' },
+  '筒井涼介': { key:'筒井', prefix:'TR', denpyoSheet:'筒井伝票' },
+  '藤原慶俊': { key:'藤原', prefix:'FK', denpyoSheet:'藤原伝票' },
+  '袖井貢':   { key:'袖井', prefix:'MS', denpyoSheet:'袖井伝票' },
+  '原田峰行': { key:'原田', prefix:'HT', denpyoSheet:'原田伝票' }
 };
-const CHANNEL_TO_ROUTE={ "折込":"【折込】新規","ポスティング":"【ポス】新規","声掛":"【キャッチ】新規","紹介":"紹介","看板":"看板","再来":"今週リピーター","その他":"" };
-const CHANNEL_TO_NYURYU={ "折込":"折込","ポスティング":"ポス","声掛":"声掛","紹介":"紹介","看板":"看板","再来":"再来","その他":"その他" };
-const PREFIX={ "八嶋真司":"YS","筒井涼介":"TR","藤原慶俊":"FK","袖井貢":"MS","原田峰行":"HT" };
 
-// 本人確認データ（読取で自動入力→手修正欄から反映）
-const OCR={ name:"", sex:"", zip:"", addr:"", banchi:"", birth:"", method:"免許証", shokugyo:"", num:"" };
-function readPersonInputs(){
-  OCR.name=val('p_name'); OCR.zip=val('p_zip'); OCR.banchi=val('p_banchi');
-  OCR.birth=val('p_birth'); OCR.method=val('p_method'); OCR.shokugyo=val('p_shokugyo'); OCR.num=val('p_num');
-  OCR.addr='';  // 都道府県〜町域は台帳側で郵便番号から自動補完（AD列ARRAYFORMULA）
+// きっかけ(紙7種) → 経路(伝票9択) / 流入(台帳7択)  ※管理マスター5_変換マスタと一致
+const CHANNEL_TO_ROUTE  = { '折込':'【折込】新規','ポスティング':'【ポス】新規','声掛':'【キャッチ】新規',
+                            '紹介':'紹介','看板':'看板','再来':'今週リピーター','その他':'' };
+const CHANNEL_TO_NYURYU = { '折込':'折込','ポスティング':'ポス','声掛':'声掛',
+                            '紹介':'紹介','看板':'看板','再来':'再来','その他':'その他' };
+
+/* ==================== [3] ヘッダー正規化と別名表 ==================== */
+/* 管理マスター「9_ヘッダー別名マスタ」と常に一致させる。
+ * normalizeHeader_ : NFKC(全半角統一: ｇ→g・全角空白→半角) → 空白全除去 → []除去 */
+function normalizeHeader_(s) {
+  return String(s == null ? '' : s)
+    .normalize('NFKC')
+    .replace(/\s+/g, '')
+    .replace(/[\[\]]/g, '');
 }
 
-function opt(a,s){return a.map(v=>`<option ${v===s?'selected':''}>${v}</option>`).join("");}
-function updateConv(){
-  const c=val('channel');
-  if(!c){ document.getElementById('conv').innerHTML='きっかけを選ぶと経路・流入の変換を表示します'; return; }
-  const r=CHANNEL_TO_ROUTE[c], n=CHANNEL_TO_NYURYU[c];
-  document.getElementById('conv').innerHTML=`自動変換 → 経路（伝票）：<b>${r||'（空）※査定件数集計に載りません'}</b> ／ 流入（台帳）：<b>${n}</b>`;
-}
+// 「正規化済み別名 → 正規キー」。値の側も normalizeHeader_ 済みの表記で書くこと。
+const HEADER_ALIASES = {
+  '上代(買取相場×0.7)': '上代',   // 古物台帳:筒井・藤原・袖井 / 商品登録:全員Q列
+  '予想上代':           '予測上代' // 商品登録:筒井・藤原・原田
+  // 「買取日]」→ 記号除去で「買取日」に自然解決
+  // 「重量(ｇ)」→ NFKCで「重量(g)」に自然解決
+  // 「　卸先」→ 空白除去で「卸先」に自然解決
+};
 
-// ===== 品物行 =====
-let seq=0;
-function addItem(preset){
-  preset=preset||{genre:"金券類"};
-  const id=++seq;
-  const w=document.createElement("div");
-  w.className="item"; w.dataset.id=id;
-  w.innerHTML=`
-    <div class="ihead"><span class="ino"></span>
-      <select class="genre" style="max-width:150px" onchange="renderFields(${id})">${opt(GENRES,preset.genre)}</select>
-      <select class="oroshi" style="max-width:150px">${opt(OROSHI,preset.oroshi||"チケッティ")}</select>
-      <button class="del" onclick="delItem(this)" aria-label="この品物を削除">${IC.close}</button>
-    </div>
-    <div class="dynfields"></div>
-    <div class="yosokuwrap"></div>
-    <div class="grid g2" style="margin-top:6px;">
-      <div><div class="sub">上代¥ <span class="autohint" id="jh${id}"></span></div><input class="jd" type="number" inputmode="numeric" value="${preset.jd||0}" oninput="recalc()"></div>
-      <div><div class="sub">下代¥（買取額）</div><input class="gd" type="number" inputmode="numeric" value="${preset.gd||0}" oninput="recalc()"></div>
-    </div>
-    <div class="grid g2" style="margin-top:6px;">
-      <div><div class="sub">数量</div><input class="qty" type="number" inputmode="numeric" value="${preset.qty||1}" oninput="onQty(${id})"></div><div></div>
-    </div>
-    <div class="pf" id="pf${id}">粗利 ¥0</div>`;
-  document.getElementById("items").appendChild(w);
-  renderFields(id,preset); renumber(); recalc();
-}
-function renderFields(id,preset){
-  preset=preset||{};
-  const w=document.querySelector(`.item[data-id="${id}"]`);
-  const g=w.querySelector(".genre").value, L=LAYOUT[g]||{itemname:true}, box=w.querySelector(".dynfields");
-  let h="";
-  if(L.brand||L.line){
-    h+=`<div class="grid ${L.line?'g2':'g1'}">`;
-    if(L.brand) h+=`<div><div class="sub">ブランド</div><select class="brand">${opt(BRANDS,preset.brand||"")}</select></div>`;
-    if(L.line)  h+=`<div><div class="sub">ライン</div><select class="line">${opt(LINES,preset.line||"")}</select></div>`;
-    h+=`</div>`;
+/**
+ * ヘッダー行を読み、正規キー→列番号(1始まり)のマップを返す。
+ * 重複ヘッダー（古物台帳の買取日/現場名/顧客名/郵便番号の再掲）は
+ * 「最初の出現」を採用する。再掲側(Z〜AC)は数式委任のため書かない。
+ */
+function resolveHeaders_(sheet, headerRow) {
+  const lastCol = sheet.getLastColumn();
+  const vals = sheet.getRange(headerRow, 1, 1, lastCol).getValues()[0];
+  const map = {};
+  for (let i = 0; i < vals.length; i++) {
+    let key = normalizeHeader_(vals[i]);
+    if (!key) continue;
+    if (HEADER_ALIASES[key]) key = HEADER_ALIASES[key];
+    if (!(key in map)) map[key] = i + 1;  // 最初の出現のみ
   }
-  if(L.kinken){
-    const kt=preset.ktype||(w.querySelector(".ktype")?w.querySelector(".ktype").value:"テレホンカード");
-    const kdoSel=preset.kdo||(w.querySelector(".kdo")?w.querySelector(".kdo").value:"50度数");
-    h+=`<div class="grid g2"><div><div class="sub">種別</div><select class="ktype" onchange="renderFields(${id})"><option>テレホンカード</option><option>切手</option><option>その他</option></select></div>`;
-    if(kt==="テレホンカード") h+=`<div><div class="sub">度数</div><select class="kdo" onchange="renderFields(${id})">${opt(TELECA_DO,kdoSel)}</select></div>`;
-    else h+=`<div><div class="sub">内容（自由記入）</div><input class="kfree" value="${(preset.kfree||'').replace(/"/g,'&quot;')}" placeholder="例：記念切手"></div>`;
-    h+=`</div>`;
-    if(kt==="テレホンカード"&&kdoSel==="その他度数"){
-      h+=`<div style="margin-top:6px;"><div class="sub">度数（自由入力）<span class="opt">例：100度数</span></div><input class="kdofree" value="${(preset.kdofree||'').replace(/"/g,'&quot;')}" placeholder="例：100度数" style="background:var(--form-bg);"></div>`;
-      h+=`<div class="sub" style="color:var(--ocr);margin-top:4px;">※単価表に無い度数のため上代は手入力してください（種別はテレホンカードのまま記録されます）</div>`;
+  return map;
+}
+
+/* ==================== [1] 追記位置（プレフィル行対策） ==================== */
+/**
+ * keyCols（例: [買取日列, No.列]）がすべて空である最初の行を返す。
+ * getLastRow()/appendRow()は使用禁止:
+ *   実データの下に数式プレフィル行（E列バイヤー名・粗利式等）が
+ *   数千行存在するため（実測: 古物台帳筒井6356行 / 商品登録3705〜4723行）。
+ */
+function findAppendRow_(sheet, headerRow, keyCols) {
+  const last = sheet.getLastRow();  // 走査範囲の上限としてのみ使用
+  if (last <= headerRow) return headerRow + 1;
+  const width = Math.max.apply(null, keyCols);
+  const vals = sheet.getRange(headerRow + 1, 1, last - headerRow, width).getValues();
+  for (let i = 0; i < vals.length; i++) {
+    let empty = true;
+    for (const c of keyCols) {
+      if (vals[i][c - 1] !== '' && vals[i][c - 1] !== null) { empty = false; break; }
     }
+    if (empty) return headerRow + 1 + i;
   }
-  if(L.kosen) h+=`<div><div class="sub">種類<span class="opt">一覧に無ければ空欄＋商品名で</span></div><select class="kosen">${opt(KOSEN,preset.kosen||"")}</select></div>`;
-  if(L.itemname){
-    const ph=g==="貴金属"?"例：K18喜平ネックレス":g==="宝石"?"例：Pt900 ダイヤリング":"商品名";
-    h+=`<div style="margin-top:6px;"><div class="sub">商品名</div><input class="iname" value="${(preset.iname||'').replace(/"/g,'&quot;')}" placeholder="${ph}"></div>`;
-  }
-  if(L.weight) h+=`<div style="margin-top:6px;"><div class="sub">重量(g)</div><input class="wt" type="number" inputmode="decimal" value="${preset.wt||''}" placeholder="必ず計量" style="background:var(--form-bg);"></div>`;
-  box.innerHTML=h;
-  if(L.kinken&&preset.ktype){const k=w.querySelector(".ktype"); if(k)k.value=preset.ktype;}
-  if(L.kinken&&preset.kdo){const k=w.querySelector(".kdo"); if(k)k.value=preset.kdo;}
-
-  const yw=w.querySelector(".yosokuwrap");
-  yw.innerHTML = L.weight ? `<div style="margin-top:6px;"><div class="sub">予測上代¥（実際価格）</div><input class="yosoku" type="number" inputmode="numeric" value="${preset.yosoku||''}" placeholder="実際価格" oninput="onYosoku(${id})"></div>` : "";
-
-  if(GENRE_OROSHI[g]){const os=w.querySelector(".oroshi"); if(os)os.value=GENRE_OROSHI[g];}
-  onTeleca(id); onYosoku(id); jdHint(id); recalc();
-}
-function onTeleca(id){const it=q(id);const kdo=it.querySelector('.kdo');if(!kdo)return;
-  if(kdo.value==="その他度数"){jdHint(id); recalc(); return;}
-  const qty=+v(it,'.qty')||0, unit=TELECA_UNIT[kdo.value]||0; it.querySelector('.jd').value=qty*unit; jdHint(id); recalc();}
-function onYosoku(id){const it=q(id);const y=it.querySelector('.yosoku');if(!y)return;
-  it.querySelector('.jd').value=Math.round((+y.value||0)*KIKINZOKU_RATE); jdHint(id); recalc();}
-function onQty(id){onTeleca(id); recalc();}
-function jdHint(id){const it=q(id);const el=it.querySelector(`#jh${id}`);if(!el)return;
-  const kdo=it.querySelector('.kdo');
-  el.textContent = kdo ? (kdo.value==="その他度数"?"（手入力）":"（数量×単価で自動）") : it.querySelector('.yosoku')?'（予測上代×0.9で自動）':'';}
-function delItem(b){b.closest(".item").remove(); renumber(); recalc();}
-function renumber(){document.querySelectorAll('.item .ino').forEach((e,i)=>e.textContent=i+1);}
-function q(id){return document.querySelector(`.item[data-id="${id}"]`);}
-function v(it,c){const e=it.querySelector(c);return e?e.value:"";}
-function recalc(){let tj=0,tg=0,n=0;
-  document.querySelectorAll('.item').forEach(it=>{const j=+v(it,'.jd')||0,g=+v(it,'.gd')||0,p=j-g;tj+=j;tg+=g;n++;
-    const pf=it.querySelector('.pf');pf.textContent='粗利 ¥'+p.toLocaleString();pf.classList.toggle('minus',p<0);});
-  const tp=tj-tg;
-  tJ.textContent='¥'+tj.toLocaleString();tG.textContent='¥'+tg.toLocaleString();
-  tP.textContent='¥'+tp.toLocaleString();tP.classList.toggle('minus',tp<0);
-  // 精算バー（署名要素）: 粗利ライブ
-  const sp=document.getElementById('sbP'), sn=document.getElementById('sbN');
-  if(sp){ sp.textContent=(tp<0?'-¥'+Math.abs(tp).toLocaleString():'¥'+tp.toLocaleString()); sp.classList.toggle('minus',tp<0); }
-  if(sn){ sn.textContent=n+'点'; }
+  return last + 1;
 }
 
-// ===== 収集 =====
-function collect(){
-  return [...document.querySelectorAll('.item')].map(it=>{
-    const g=v(it,'.genre');
-    const kdoVal=v(it,'.kdo'), kdofreeVal=v(it,'.kdofree');
-    const detail = (kdoVal==="その他度数"?(kdofreeVal||"その他度数"):kdoVal)||v(it,'.kfree')||v(it,'.kosen')||"";
-    const o={ genre:g, oroshi:v(it,'.oroshi'), brand:v(it,'.brand'), line:v(it,'.line'),
-      ktype:v(it,'.ktype'), kdofree:kdofreeVal||"", detail:detail, iname:v(it,'.iname'), wt:v(it,'.wt'),
-      yosoku:+v(it,'.yosoku')||0, qty:+v(it,'.qty')||1, jd:+v(it,'.jd')||0, gd:+v(it,'.gd')||0 };
-    o.dispname = o.iname || detail || (o.brand?`${o.brand}${o.line?' '+o.line:''}`:"") || g;
+/* ==================== [2] 採番（全走査MAX+1） ==================== */
+/**
+ * 対象バイヤーの古物台帳No.列を全行走査し、prefix一致の数値部MAX+1を返す。
+ * 最終行参照は禁止（既存Noに重複計24件・非単調並びが実在）。
+ * 呼び出し側でLockService取得済みであること。
+ */
+function getNextNo_(sheet, headerRow, noCol, prefix) {
+  const last = sheet.getLastRow();
+  if (last <= headerRow) return prefix + '1';
+  const vals = sheet.getRange(headerRow + 1, noCol, last - headerRow, 1).getValues();
+  const re = new RegExp('^' + prefix + '(\\d+)$');
+  let max = 0;
+  for (const [v] of vals) {
+    const m = re.exec(String(v || '').trim());
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return { next: max + 1, no: prefix + (max + 1) };
+}
+
+/* ==================== 書込ユーティリティ ==================== */
+/**
+ * {列番号: 値} を連続区間ごとにまとめて setValues する。
+ * 指定外の列には一切触れない＝数式委任列を絶対に潰さないための中核。
+ */
+function batchSetRow_(sheet, row, colValueMap) {
+  const cols = Object.keys(colValueMap).map(Number).sort((a, b) => a - b);
+  let i = 0;
+  while (i < cols.length) {
+    let j = i;
+    while (j + 1 < cols.length && cols[j + 1] === cols[j] + 1) j++;
+    const seg = cols.slice(i, j + 1).map(c => colValueMap[c]);
+    sheet.getRange(row, cols[i], 1, seg.length).setValues([seg]);
+    i = j + 1;
+  }
+}
+
+// 許可値ガード: 範囲外は書かずに警告として記録して続行（安全装置）
+function sanitize_(value, allowed, label, warnings) {
+  const v = String(value == null ? '' : value).trim();
+  if (v === '') return '';
+  if (allowed.indexOf(v) >= 0) return v;
+  warnings.push(`[入力規則外] ${label}="${v}" は許可値に無いため空欄で書込`);
+  return '';
+}
+
+/* ==================== フォームキー変換層（v4系→正規キー） ==================== */
+function normalizePayload_(p, warnings) {
+  const t = {
+    buyer:   p.buyer || '',
+    genba:   p.genba || p.site || '',
+    channel: p.channel || p.ryunyu || '',
+    taiou:   p.taiou || '催事',          // [6] 既定=催事。出張はフォームのトグルで明示
+    hansoku: p.promo || '',
+    biko:    p.biko || '',
+    person:  p.person || {}
+  };
+  t.items = (p.items || []).map(it => {
+    // kdofree（その他度数の自由入力）をkdoより先に評価（kdo='その他度数'のプレースホルダを実値で上書き）
+    const detail = it.detail || it.kdofree || it.kdo || it.kfree || it.kosen || '';
+    const o = {
+      genre: it.genre || '', vendor: it.oroshi || it.vendor || '',
+      brand: it.brand || '', line: it.line || '',
+      kind: it.ktype || it.kind || '', detail: detail,
+      itemName: it.iname || it.itemName || '',
+      weight: it.wt || it.weight || '',
+      yoteJodai: Number(it.yosoku || it.yoteJodai || 0) || 0,
+      qty: Number(it.qty || 1) || 1,
+      jodai: Number(it.jd || it.jodai || 0) || 0,
+      geShiro: Number(it.gd || it.geShiro || 0) || 0
+    };
+    // 上代フォールバック（フォーム計算値が無い場合のみGAS計算） [7]
+    if (!o.jodai) {
+      if (o.genre === '金券類' && CONFIG.TELECA_UNIT[o.detail]) {
+        o.jodai = CONFIG.TELECA_UNIT[o.detail] * o.qty;          // 50/105度数のみ自動
+      } else if ((o.genre === '貴金属' || o.genre === '宝石') && o.yoteJodai) {
+        o.jodai = Math.round(o.yoteJodai * CONFIG.KIKINZOKU_RATE);
+      }
+      // 「その他度数」等の単価表外は自動計算しない＝手入力値のまま（0なら0で警告）
+      if (!o.jodai) warnings.push(`[上代未設定] ${o.genre}/${o.itemName || o.detail}: 上代0のまま書込`);
+    }
+    // 卸先の自動割当（未指定時）
+    if (!o.vendor && CONFIG.GENRE_OROSHI[o.genre]) o.vendor = CONFIG.GENRE_OROSHI[o.genre];
     return o;
   });
+  return t;
 }
-// ===== v6.6 冪等化: 取引ごとに一意のtxIdを発行(再送しても二重転記されない) =====
-function newTxId(){ try{ return crypto.randomUUID(); }catch(e){ return 'tx-'+Date.now()+'-'+Math.random().toString(36).slice(2,10); } }
-let TX_ID = newTxId();     // resetDemo()=location.reload() で自動再発行。保留呼び出し時は元のtxIdを引き継ぐ
-let RECALLED_AT = null;    // 保留から呼び出した取引のsavedAt(送信成功時に保留から自動削除するため)
 
-function buildPayload(){
-  readPersonInputs();
-  // 画像は送信に同梱しない（数MBのPOSTがモバイル回線で失敗する原因になるため）。
-  // 画像を使うのはOCR（mode:'ocr'）だけ。ここでは添付有無のフラグのみ送る。
-  return { txId:TX_ID, buyer:val('buyer'), genba:val('genba'), channel:val('channel'),
-    taiou:val('taiou'), promo:val('promo'), biko:val('biko'), person:OCR,
-    imageFlags:{ denpyo:!!IMAGES.denpyo, license:!!IMAGES.license, items:IMAGES.items.length },
-    fileIds:{ denpyo:FILE_IDS.denpyo, license:FILE_IDS.license, items:FILE_IDS.items.filter(Boolean) },
-    items:collect() };
-}
-function val(id){return document.getElementById(id).value;}
+/* ==================== エントリポイント ==================== */
+function doPost(e) {
+  const warnings = [];
+  let payload;
+  try {
+    payload = JSON.parse(e.postData.contents);  // text/plain のJSON文字列
+  } catch (err) {
+    return json_({ ok: false, error: 'JSONの解析に失敗: ' + err });
+  }
 
-
-// ===== 画面内ダイアログ（OS標準alert/confirmは端末により表示されないため不使用） =====
-let _dlgResolve=null;
-function _dlg(title, body, buttons){
-  return new Promise(resolve=>{
-    _dlgResolve=resolve;
-    const bg=document.getElementById('dlgBg');
-    document.getElementById('dlgTitle').textContent=title;
-    document.getElementById('dlgBody').textContent=body||'';
-    const btns=document.getElementById('dlgBtns');
-    btns.innerHTML='';
-    buttons.forEach(b=>{
-      const el=document.createElement('button');
-      el.className=b.sec?'sec':'pri'; el.textContent=b.label;
-      el.onclick=()=>{ bg.classList.remove('show'); const r=_dlgResolve; _dlgResolve=null; if(r) r(b.value); };
-      btns.appendChild(el);
-    });
-    bg.classList.add('show');
-  });
-}
-document.addEventListener('DOMContentLoaded',()=>{
-  document.getElementById('dlgBg').addEventListener('click',e=>{
-    if(e.target.id==='dlgBg'){ e.target.classList.remove('show'); const r=_dlgResolve; _dlgResolve=null; if(r) r(false); }
-  });
-});
-function _dlgHtml(title, html, buttons){
-  return new Promise(resolve=>{
-    _dlgResolve=resolve;
-    const bg=document.getElementById('dlgBg');
-    document.getElementById('dlgTitle').textContent=title;
-    document.getElementById('dlgBody').innerHTML=html||'';
-    const btns=document.getElementById('dlgBtns');
-    btns.innerHTML='';
-    buttons.forEach(b=>{
-      const el=document.createElement('button');
-      el.className=b.sec?'sec':'pri'; el.textContent=b.label;
-      el.onclick=()=>{ bg.classList.remove('show'); const r=_dlgResolve; _dlgResolve=null; if(r) r(b.value); };
-      btns.appendChild(el);
-    });
-    bg.classList.add('show');
-  });
-}
-function alertModal(title, body){ return _dlg(title, body, [{label:'閉じる', value:true}]); }
-function confirmModal(title, body){ return _dlg(title, body, [{label:'キャンセル', value:false, sec:true},{label:'送信する', value:true}]); }
-
-// ===== GAS接続ランプ（起動時に疎通確認・タップで詳細） =====
-let _gasStatus={checked:false, ok:false, detail:'未確認'};
-async function checkGas(){
-  const dot=document.getElementById('gasDot');
-  try{
-    const r=await postToGas({mode:'ping'});
-    if(r.ok){
-      _gasStatus={checked:true, ok:true, detail:'接続OK  '+(r.version||'')+'\nAPIキー: '+(r.apiKeySet?'設定済み':'未設定')+'\n'+Object.entries(r.sheets||{}).map(([k,v])=>'・'+k+' → '+v).join('\n')};
-      dot.className='gasdot ok';
-    }else{
-      _gasStatus={checked:true, ok:false, detail:'GASがエラー応答: '+(r.error||'')+'\n（GASが旧バージョンの可能性。新バージョンで再デプロイしてください）'};
-      dot.className='gasdot ng';
+  // mode=ping: 接続テスト（シートアクセス・APIキー設定状況を返す。書込・課金なし）
+  if (payload.mode === 'ping') {
+    if (payload.lite) return json_({ ok: true, lite: true, version: 'GAS v3.4', time: new Date().toISOString() });
+    return handlePing_();
+  }
+  // mode=txstatus: txIdの転記状況照会（書込なし・フォームの保留ビューア／タイムアウト後自動確認用）
+  if (payload.mode === 'txstatus') {
+    const ids = (payload.txIds || []).slice(0, 20).map(x => String(x).slice(0, 64));
+    const results = {};
+    for (const id of ids) {
+      const hit = id ? findTxLog_(id) : null;
+      results[id] = hit ? { written: true, nos: hit.nos, time: hit.time } : { written: false };
     }
-  }catch(err){
-    _gasStatus={checked:true, ok:false, detail:'GASに接続できません: '+err.message+'\n\n確認: ①電波状況 ②デプロイ設定「アクセスできるユーザー: 全員」③新バージョンで再デプロイ済みか'};
-    dot.className='gasdot ng';
+    return json_({ ok: true, results: results });
   }
-}
-function showGasStatus(){ alertModal(_gasStatus.ok?'GAS接続状態: 正常':'GAS接続状態: 要確認', _gasStatus.detail+'\n\n（ヘッダーのランプ: 緑=接続OK / 赤=不通。再読み込みで再チェック）'); }
+  // mode=ocr: 画像を受けてOCR結果を返す（転記はしない・課金はここだけ）
+  if (payload.mode === 'ocr') {
+    return handleOcr_(payload);
+  }
+  // mode=upload: 画像をDrive一時保管へ保存するだけ（商品画像・OCR未実行時の伝票等）
+  if (payload.mode === 'upload') {
+    return handleUpload_(payload);
+  }
 
-// ===== 画像（1280pxに圧縮して保持） =====
-const IMAGES={ denpyo:null, license:null, items:[] };
-const FILE_IDS={ denpyo:null, license:null, items:[] };   // Drive保存済みのfileId（GAS v3.0が返却）
-function pick(kind,cam){ document.getElementById('file_'+kind+'_'+(cam?'cam':'lib')).click(); }
-async function onPick(e,kind){
-  const files=[...e.target.files]; if(!files.length) return;
-  for(const f of files){
-    try{
-      const b64=await compressImage(f,1280,0.8);
-      if(kind==='items'){
-        if(IMAGES.items.length<3){
-          IMAGES.items.push(b64);
-          uploadInBackground_('items', b64);   // 撮影直後に裏でDrive保存（誰も待たない・失敗しても取引は継続）
-        } else alertModal('上限', '商品画像は最大3枚です。');
-      }
-      else { IMAGES[kind]=b64; FILE_IDS[kind]=null; }   // 差し替え時は旧fileIdを破棄（読取/送信時に再保存）
-    }catch(err){ alertModal('画像エラー', '画像の読み込みに失敗しました。別の写真でお試しください。'); }
+  // ---- v3.2 冪等化: 同一txIdの再送は書き込まず初回結果を返す（二重転記防止） ----
+  const txId = String(payload.txId || '').slice(0, 64);
+  if (txId) {
+    const cached = CacheService.getScriptCache().get('tx_' + txId);
+    if (cached) return ContentService.createTextOutput(cached).setMimeType(ContentService.MimeType.JSON);
   }
-  renderThumbs(kind); e.target.value='';
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30 * 1000)) {
+    return json_({ ok: false, error: '他の送信を処理中です。数秒後に再送してください（オフライン再送機構が自動対応）' });
+  }
+  const t0 = Date.now();
+  const trace = [];
+  let step = '初期化';
+  const mark = s => { trace.push(step + ' ' + (Date.now() - t0) + 'ms'); step = s; };
+  try {
+    step = '冪等チェック';
+    if (txId) {
+      const dup = findTxLog_(txId);   // キャッシュ失効後もシート記録で二重転記を防ぐ
+      if (dup) return json_({ ok: true, nos: dup.nos, buyer: dup.buyer, itemCount: dup.nos.length,
+        warnings: ['[冪等] この取引は ' + dup.time + ' に転記済みのため再書込しませんでした'] });
+    }
+    mark('入力正規化');
+    const t = normalizePayload_(payload, warnings);
+    const buyer = BUYERS[t.buyer];
+    if (!buyer) return json_({ ok: false, error: `未登録のバイヤー: "${t.buyer}"（BUYERSと管理マスター1を確認）` });
+    if (!t.items.length) return json_({ ok: false, error: '商品が0件です' });
+
+    const today = new Date();
+    const route  = sanitize_(CHANNEL_TO_ROUTE[t.channel]  || '', CONFIG.VALID.route,  '経路', warnings);
+    const nyuryu = sanitize_(CHANNEL_TO_NYURYU[t.channel] || '', CONFIG.VALID.nyuryu, '流入', warnings);
+    // 「その他」→経路空欄は仕様（伝票9択に該当なし）。sanitize_は''をそのまま通す。
+    if (t.channel === 'その他') {
+      warnings.push('[既知の副作用] きっかけ「その他」は経路空欄のため伝票の総査定件数(COUNTA)に載りません（要件定義書v1.1 §7.1・未確定事項6）');
+    }
+
+    mark('古物台帳オープン＋採番');
+    // ---- 採番（古物台帳のNo.列を正とし、4帳簿で同一番号を使う） ----
+    const ssK = SpreadsheetApp.openById(CONFIG.SS.KOBUTSU);
+    const shK = ssK.getSheetByName(buyer.key);               // 常にgetSheetByName（順序バグ防止）
+    if (!shK) return json_({ ok: false, error: `古物台帳にタブ「${buyer.key}」がありません` });
+    const hK = resolveHeaders_(shK, CONFIG.HEADER_ROW.KOBUTSU);
+    for (const need of ['買取日', 'No.', '上代', '下代', '卸先']) {
+      if (!hK[need]) return json_({ ok: false, error: `古物台帳/${buyer.key}: ヘッダー「${need}」を解決できません（別名表・正規化を確認）` });
+    }
+    const numbering = getNextNo_(shK, CONFIG.HEADER_ROW.KOBUTSU, hK['No.'], buyer.prefix);
+    t.items.forEach((it, i) => { it.no = buyer.prefix + (numbering.next + i); });
+
+    // ---- 4帳簿へ転記 ----
+    mark('古物台帳 書込');   writeKobutsu_(shK, hK, t, route, nyuryu, today, warnings);
+    mark('商品登録 書込');   writeShohin_(buyer, t, today, warnings);
+    mark('在庫管理 書込');   writeZaiko_(buyer, t, today, warnings);
+    mark('買取伝票 書込');   writeDenpyo_(buyer, t, route, today, warnings);
+
+    // ---- Phase 2: 画像の確定（リネーム＋月フォルダへ移動）とSlack決済報告のキュー投入 ----
+    const nos = t.items.map(it => it.no);
+    mark('Drive画像整理');
+    let fileIds = {};
+    try { fileIds = finalizeImages_(payload.fileIds || {}, nos[0], today, warnings); }
+    catch (e) { warnings.push('[Drive] 画像の整理に失敗（取引データは正常に転記済み）: ' + e); }
+    mark('Slackキュー投入');
+    // 伝票/身分証が添付済みなのにfileId未確定＝送信後の後追い保存が来る見込み → キューを一時holdに
+    const _flags = payload.imageFlags || {};
+    const waitingImgs = !!((_flags.denpyo && !fileIds.denpyo) || (_flags.license && !fileIds.license));
+    try { enqueueSlack_(t, nos, fileIds, warnings, waitingImgs); }
+    catch (e) { warnings.push('[Slack] キュー投入に失敗（取引データは正常に転記済み）: ' + e); }
+
+    mark('完了');
+    const result = { ok: true, nos: nos, buyer: t.buyer, itemCount: t.items.length,
+                     warnings: warnings, elapsedMs: Date.now() - t0, trace: trace };
+    if (txId) recordTxLog_(txId, t.buyer, nos, result);
+    debugLog_(txId, 'ok', Date.now() - t0, trace.join(' → '), nos);
+    return json_(result);
+  } catch (err) {
+    const msg = '[' + step + 'で失敗] ' + String(err && err.stack || err);
+    debugLog_(txId, 'error', Date.now() - t0, msg + ' | ' + trace.join(' → '), []);
+    return json_({ ok: false, error: msg, failedStep: step, trace: trace, warnings: warnings });
+  } finally {
+    lock.releaseLock();
+  }
 }
-function compressImage(file,maxW,q){
-  return new Promise((res,rej)=>{
-    const img=new Image(); const url=URL.createObjectURL(file);
-    img.onload=()=>{
-      const sc=Math.min(1,maxW/Math.max(img.width,img.height));
-      const c=document.createElement('canvas');
-      c.width=Math.round(img.width*sc); c.height=Math.round(img.height*sc);
-      c.getContext('2d').drawImage(img,0,0,c.width,c.height);
-      URL.revokeObjectURL(url); res(c.toDataURL('image/jpeg',q));
+
+function json_(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/* ==================== ① 古物台帳 ==================== */
+/* [5] 書込禁止（数式委任）: 粗利 / 卸先住所 / 区分 / 買取日(2)〜郵便番号(2)の再掲 / 住所
+ *     resolveHeaders_が「最初の出現」を採るため再掲Z〜ACは元々対象外。
+ *     卸先住所・区分・住所・粗利・買取相場・職業その他・着金・チェックはマップに含めない。 */
+function writeKobutsu_(sh, h, t, route, nyuryu, today, warnings) {
+  const HR = CONFIG.HEADER_ROW.KOBUTSU;
+  const p = t.person || {};
+  const kakunin  = sanitize_(p.method || '免許証', CONFIG.VALID.kakunin,  '確認の方法', warnings);
+  const shokugyo = sanitize_(p.shokugyo || '',     CONFIG.VALID.shokugyo, '職業',       warnings);
+  const taiou    = sanitize_(t.taiou,              CONFIG.VALID.taiou,    '対応方法',   warnings);
+
+  for (const it of t.items) {
+    const row = findAppendRow_(sh, HR, [h['買取日'], h['No.']]);
+    const m = {};
+    const set = (key, val) => { if (h[key] && val !== '' && val != null) m[h[key]] = val; };
+    set('買取日', today);
+    set('郵便番号', p.zip || '');
+    set('顧客名', p.name || '');
+    set('☑', CONFIG.DEFAULT_CHECK);
+    set('バイヤー', t.buyer);
+    set('現場名', t.genba);
+    set('No.', it.no);
+    set('ブランド名', it.brand);
+    set('ジャンル', it.genre);
+    set('ライン', it.line);
+    set('商品名(製品名、金性)', it.itemName);   // NFKC後の表記（全角括弧→半角）
+    set('種別', it.kind);
+    set('詳細', it.detail);
+    set('数量', it.qty);
+    set('上代', it.jodai);
+    set('下代', it.geShiro);
+    set('予測上代', it.yoteJodai || '');
+    set('卸先', it.vendor);
+    set('備考', t.biko);
+    set('丁目番地号', p.banchi || '');           // AD住所は郵便番号ARRAYFORMULAに委任
+    set('職業', shokugyo);
+    set('生年月日', p.birth || '');
+    set('流入', nyuryu);
+    set('確認の方法', kakunin);
+    set('番号/その他', p.num || '');
+    set('対応方法', taiou);
+    batchSetRow_(sh, row, m);
+  }
+}
+
+/* ==================== ② 商品登録 ==================== */
+/* [5] 書込禁止（数式委任）: 買取相場（=IF(卸先="グランチャ"…)プレフィル）/ 粗利（=Q-R） */
+function writeShohin_(buyer, t, today, warnings) {
+  const ss = SpreadsheetApp.openById(CONFIG.SS.SHOHIN);
+  const sh = ss.getSheetByName(buyer.key);
+  if (!sh) { warnings.push(`[スキップ] 商品登録にタブ「${buyer.key}」なし`); return; }
+  const HR = CONFIG.HEADER_ROW.SHOHIN;
+  const h = resolveHeaders_(sh, HR);
+  // 八嶋のU列は見出し空白 → 「卸先」が解決できなければU(21)にフォールバック
+  const vendorCol = h['卸先'] || 21;
+  const p = t.person || {};
+
+  for (const it of t.items) {
+    const row = findAppendRow_(sh, HR, [h['買取日'] || 1, h['No.'] || 7]);
+    const m = {};
+    const set = (key, val) => { if (h[key] && val !== '' && val != null) m[h[key]] = val; };
+    set('買取日', today);
+    set('郵便番号', p.zip || '');
+    set('顧客名', p.name || '');
+    set('☑', CONFIG.DEFAULT_CHECK);
+    set('バイヤー', t.buyer);
+    set('現場名', t.genba);
+    set('No.', it.no);
+    set('ブランド名', it.brand);
+    set('ジャンル', it.genre);
+    set('ライン', it.line);
+    set('商品名(製品名、金性)', it.itemName);
+    set('重量(g)', it.weight);                    // 全角ｇはNFKCで解決済み
+    set('種別', it.kind);
+    set('詳細', it.detail);
+    set('数量', it.qty);
+    set('上代', it.jodai);                        // Q列「上代（買取相場×0.7）」→別名解決。計算済み上代（二重掛け禁止）
+    set('下代', it.geShiro);
+    set('予測上代', it.yoteJodai || '');          // 「予想上代」3名→別名解決
+    if (it.vendor) m[vendorCol] = it.vendor;
+    batchSetRow_(sh, row, m);
+  }
+}
+
+/* ==================== ③ 在庫管理 ==================== */
+/* 卸先=グランチャ/グランチャ宝石のみ。書込はA〜K＋Pのみ（L以降グランチャ領域は
+ * 安全装置として許可列ホワイトリストで物理的に書けない構造にする） */
+function writeZaiko_(buyer, t, today, warnings) {
+  const target = t.items.filter(it => CONFIG.ZAIKO_TARGET_VENDORS.indexOf(it.vendor) >= 0);
+  if (!target.length) return;
+  if (!CONFIG.SS.ZAIKO) { warnings.push('[スキップ] 在庫管理表のスプレッドシートID未設定（未確定事項1）: グランチャ向け' + target.length + '件は手動転記が必要'); return; }
+  const ss = SpreadsheetApp.openById(CONFIG.SS.ZAIKO);
+  const sh = ss.getSheetByName(buyer.key);
+  if (!sh) { warnings.push(`[スキップ] 在庫管理にタブ「${buyer.key}」なし`); return; }
+  const HR = CONFIG.HEADER_ROW.ZAIKO;
+  const h = resolveHeaders_(sh, HR);
+  const ALLOWED_MAX = 11, P_COL = h['仕入日'] || 16;   // K=11まで＋P列のみ許可
+
+  for (const it of target) {
+    // A列はチェックボックスFALSEがプレフィルされ得るため、空き行判定はB列(NO)のみで行う
+    const row = findAppendRow_(sh, HR, [h['NO'] || 2]);
+    const m = {};
+    const set = (key, val, colFallback) => {
+      const col = h[key] || colFallback;
+      if (!col || val === '' || val == null) return;
+      if (col > ALLOWED_MAX && col !== P_COL) {          // 安全装置: 許可列以外は強制的に書かない
+        warnings.push(`[書込禁止列を遮断] 在庫管理 ${key}(列${col})`);
+        return;
+      }
+      m[col] = val;
     };
-    img.onerror=()=>{ URL.revokeObjectURL(url); rej(new Error('load error')); };
-    img.src=url;
+    m[1] = false;                                        // A列(チェック)=FALSE。ヘッダー名なしの唯一の列位置固定
+    set('NO', it.no, 2);
+    set('ブランド名', it.brand);
+    set('ジャンル', it.genre);
+    set('ライン', it.line);
+    set('品名', it.itemName || it.detail || it.genre);
+    set('重量', it.weight);
+    set('仕入原価(税込)', it.geShiro);
+    set('目標売上', it.yoteJodai || '');
+    m[P_COL] = today;                                    // 仕入日
+    batchSetRow_(sh, row, m);
+  }
+}
+
+/* ==================== ④ 買取伝票 ==================== */
+/* [4] No.列=J(10)〜AM(39)。[5] 粗利行(セット5行目)は数式委任＝書かない。
+ * 1取引=1列。複数商品は上代・下代を合算して1つのNo.列へ。
+ * 空き列判定は「上代行が空」を正とする（経路は「その他」で空になり得るため）。 */
+function writeDenpyo_(buyer, t, route, today, warnings) {
+  const ss = SpreadsheetApp.openById(CONFIG.SS.DENPYO);
+  const sh = ss.getSheetByName(buyer.denpyoSheet);
+  if (!sh) { warnings.push(`[スキップ] 買取伝票にタブ「${buyer.denpyoSheet}」なし`); return; }
+
+  // B列から当日ブロック（経路行）を特定。=B5+1等の数式もgetValuesで計算済み日付が返る
+  const last = sh.getLastRow();
+  const bVals = sh.getRange(1, 2, last, 1).getValues();
+  const y = today.getFullYear(), mo = today.getMonth(), d = today.getDate();
+  let blockRow = -1;
+  for (let i = 0; i < bVals.length; i++) {
+    const v = bVals[i][0];
+    if (v instanceof Date && v.getFullYear() === y && v.getMonth() === mo && v.getDate() === d) {
+      blockRow = i + 1; break;
+    }
+  }
+  if (blockRow < 0) {
+    warnings.push(`[伝票スキップ] ${buyer.denpyoSheet}に本日(${y}/${mo + 1}/${d})の日付ブロックがありません → 手転記が必要（Phase 2でSlack通知に昇格）`);
+    return;
+  }
+
+  const F = CONFIG.DENPYO_NO_COLS.FIRST, L = CONFIG.DENPYO_NO_COLS.LAST;
+  const width = L - F + 1;                                // 30列 = No.1〜No.30
+  const block = sh.getRange(blockRow, F, 4, width).getValues(); // 経路/結果/上代/下代（粗利行は読まない・書かない）
+  let freeCol = -1;
+  for (let c = 0; c < width; c++) {
+    if (block[2][c] === '' && block[1][c] === '') { freeCol = F + c; break; } // 上代行かつ結果行が空
+  }
+  if (freeCol < 0) {
+    warnings.push(`[伝票スキップ] ${buyer.denpyoSheet}の本日ブロックはNo.30まで満杯です → 手転記が必要（Phase 2でSlack通知に昇格）`);
+    return;
+  }
+
+  const tj = t.items.reduce((s, it) => s + it.jodai, 0);
+  const tg = t.items.reduce((s, it) => s + it.geShiro, 0);
+  // 経路/結果/上代/下代の4行を1回で書く。粗利行(blockRow+4)には触れない＝数式委任
+  sh.getRange(blockRow, freeCol, 4, 1).setValues([[route], ['成約'], [tj], [tg]]);
+}
+
+/* ==================== テスト ==================== */
+/** 5名分のサンプル転記テスト。実行後、4帳簿の該当タブとwarningsを目視確認する。 */
+function runTest() {
+  const sample = (buyerName) => ({
+    buyer: buyerName, genba: 'テスト会場', channel: '折込', taiou: '催事',
+    promo: '', biko: 'runTestによる試験入力',
+    person: { name: 'テスト太郎', zip: '332-0000', banchi: '1-2-3',
+              birth: '昭和50年1月1日', method: '免許証', shokugyo: '会社員', num: '0000 0000 0000' },
+    items: [
+      { genre: '金券類', ktype: 'テレホンカード', kdo: '50度数', qty: 2, jd: 800, gd: 500, oroshi: 'チケッティ' },
+      { genre: '貴金属', iname: 'K18テストリング', wt: 3.5, yosoku: 30000, gd: 24000 } // 上代はGASフォールバックで27000
+    ]
+  });
+  Object.keys(BUYERS).forEach(name => {
+    const e = { postData: { contents: JSON.stringify(sample(name)) } };
+    const res = JSON.parse(doPost(e).getContent());
+    Logger.log('%s => %s', name, JSON.stringify(res));
   });
 }
-function renderThumbs(kind){
-  const box=document.getElementById('th_'+kind); if(!box) return;
-  const arr = kind==='items' ? IMAGES.items : (IMAGES[kind]?[IMAGES[kind]]:[]);
-  box.innerHTML = arr.map((b,i)=>`<div class="th"><img src="${b}" alt=""><button class="del" onclick="delImg('${kind}',${i})" aria-label="この画像を削除">${IC.close}</button></div>`).join('');
-  const chip=document.getElementById('chip_'+kind);
-  if(chip){
-    const on=arr.length>0;
-    chip.textContent = on ? (kind==='items'?`${arr.length}枚 添付済み`:'添付済み') : '未添付';
-    chip.classList.toggle('on',on);
-  }
-  updateOcrBtn();
-}
-function delImg(kind,i){
-  if(kind==='items'){ IMAGES.items.splice(i,1); FILE_IDS.items.splice(i,1); }
-  else { IMAGES[kind]=null; FILE_IDS[kind]=null; }
-  renderThumbs(kind);
-}
-// 裏アップロード（fire-and-forget: 失敗しても現場作業を止めない）
-function uploadInBackground_(kind, b64){
-  const idx = kind==='items' ? IMAGES.items.length-1 : null;
-  postToGas({ mode:'upload', images: kind==='items' ? {items:[b64]} : {[kind]:b64} }, 30000)
-    .then(r=>{ if(!r.ok) return;
-      if(kind==='items'){ if(r.fileIds.items&&r.fileIds.items[0]) FILE_IDS.items[idx]=r.fileIds.items[0]; }
-      else if(r.fileIds[kind]) FILE_IDS[kind]=r.fileIds[kind];
-    }).catch(()=>{});
-}
-function updateOcrBtn(){
-  const b=document.getElementById('ocrBtn'); if(!b) return;
-  const d=!!IMAGES.denpyo, l=!!IMAGES.license;
-  b.disabled=!(d||l);
-  b.innerHTML = IC.scan+' 読取（デバッグ中は停止・タップで説明）';
-  b.disabled=false;
-}
 
-// ===== 一括読取（伝票＋身分証を1リクエスト・片方のみ可） =====
-function setIfOcr(id,val){ if(val){ const el=document.getElementById(id); if(el) el.value=val; } }
-function applyOcr(r){
-  const d=r.ocr.denpyo||{}, l=r.ocr.license||{}, notes=[];
-  if(d.detected){
-    setIfOcr('buyer',d.buyer); setIfOcr('genba',d.genba);
-    if(d.channel){ document.getElementById('channel').value=d.channel; updateConv(); }
-    setIfOcr('p_shokugyo',d.shokugyo);
-    setIfOcr('p_zip',d.zip);                          // 伝票の〒欄から
-    if(!l.detected){
-      if(d.customerName && !val('p_name')) setIfOcr('p_name',d.customerName);
-      setIfOcr('p_birth',d.birth);                    // 伝票の生年月日欄から
-    }
-  }
-  if(l.detected){
-    setIfOcr('p_name',l.name); setIfOcr('p_banchi',l.banchi);
-    setIfOcr('p_birth',l.birth); setIfOcr('p_num',l.num);
-    setIfOcr('p_method',l.type);                      // 証明書種別を自動判定（免許証/マイナンバーカード等）
-    document.getElementById('p_addr_note').textContent = l.addr ? `読取住所: ${l.addr} ${l.banchi||''}（都道府県〜町域は台帳側で郵便番号から自動補完）` : '';
-    const num=document.getElementById('p_num');
-    if(l.type==='マイナンバーカード'){
-      num.value=''; num.placeholder='マイナンバーカードのため空欄（個人番号の記録は法律で禁止）';
-      notes.push('身分証はマイナンバーカードと判定。番号欄は空欄のままにしてください');
-    } else { num.placeholder='例：0000 0000 0000'; }
-  }
-  if((d.detected||l.detected) && !val('p_zip')) notes.push('郵便番号が読み取れませんでした。手入力してください');
-  const mm=document.getElementById('mismatchBox');
-  if(r.ocr.match && r.ocr.match.checked && r.ocr.match.same===false){
-    mm.style.display='block';
-    mm.innerHTML=IC.warn+' <b>伝票の顧客名と身分証の氏名が一致しません。</b><br>'+(r.ocr.match.note||'')+'<br>身分証の取り違えがないか確認してください。';
-  } else { mm.style.display='none'; }
-  const sum=document.getElementById('personSum');
-  const filled=val('p_name');
-  if(filled && !notes.length && mm.style.display==='none'){
-    sum.innerHTML=`<span class="psum-ok">${IC.check} 本人確認 読取済み：${filled} 様（タップで確認・修正）</span>`;
-  } else if(filled){
-    sum.innerHTML=`<span class="psum-warn">△ 本人確認 一部入力済み：${filled} 様（要確認・タップで開く）</span>`;
-    document.getElementById('personBox').open=true;
-  } else {
-    sum.innerHTML=`<span class="psum-warn">△ 本人確認 未入力（タップで手入力）</span>`;
-    document.getElementById('personBox').open=true;
-  }
-  // ポップアップは出さず、工程03内にインライン表示（自動で消えない・接客の邪魔をしない）
-  renderOcrNotes([...(r.warnings||[]), ...notes]);
-}
-function renderOcrNotes(msgs){
-  const box=document.getElementById('ocrNotes');
-  if(!msgs.length){ box.style.display='none'; box.innerHTML=''; return; }
-  box.innerHTML = msgs.map(m=>`<div class="ln">${IC.info}<span>${m}</span></div>`).join('');
-  box.style.display='block';
-}
-async function runOcr(){
-  // ★デバッグ版: OCRは停止（Claude APIを呼ばない＝課金ゼロ）。画像のDrive保存・Slack添付は送信フローで実施される。
-  await alertModal('OCR停止中（デバッグ版）',
-    'デバッグ期間中は課金回避のため読取を行いません。\n各欄にはサンプル値を入力済みです（必要なら手修正して送信）。\n\n※写真の添付はこのままでOK。送信するとDrive保存とSlack添付がテストされます。');
-  return;
-  const b=document.getElementById('ocrBtn');
-  b.disabled=true; const orig=b.innerHTML; b.innerHTML=IC.spin+' 読取中…（3〜6秒）';
-  try{
-    const r = await postToGas({ mode:'ocr', images:{ denpyo:IMAGES.denpyo, license:IMAGES.license } }, 30000);
-    if(r.ok){
-      if(r.fileIds){ if(r.fileIds.denpyo) FILE_IDS.denpyo=r.fileIds.denpyo; if(r.fileIds.license) FILE_IDS.license=r.fileIds.license; }
-      applyOcr(r);
-    }
-    else{ alertModal('読取エラー', r.error+'\n手入力で続行できます。'); }
-  }catch(err){
-    if(err.isConfig){ alertModal('GAS設定エラー', err.message); } else { alertModal('通信エラー', '読取の通信に失敗しました。電波の良い場所で再度お試しください（読取なしでも手入力で送信できます）。'); }
-  }finally{
-    b.innerHTML=orig; updateOcrBtn();
-  }
-}
-
-// ===== 本番送信（GAS v2.1 /exec 接続済み） =====
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbzlNtVKi_awf2cydvbOC5cWgYkCB1P7s2JPt8oPRfx1fBt6hDGuEbHst7Cwr1OMOLk0/exec';
-
-const _memQueue = [];
-function qLoad(){ try{ return JSON.parse(localStorage.getItem('muse_queue')||'[]'); }catch(e){ return _memQueue.slice(); } }
-function qSave(arr){ try{ localStorage.setItem('muse_queue', JSON.stringify(arr)); }catch(e){ _memQueue.length=0; Array.prototype.push.apply(_memQueue,arr); } }
-
-async function postToGas(payload, timeoutMs){
-  const ctl = new AbortController();
-  const timer = setTimeout(()=>ctl.abort(), timeoutMs||15000);   // 既定15秒。取引送信45秒/OCR・保存30秒
-  try{
-    const res = await fetch(GAS_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      redirect: 'follow',
-      signal: ctl.signal,
-      body: JSON.stringify(payload)
+/** ヘッダー解決の単体確認（全バイヤー×2帳簿の必須キーが揃うか） */
+function runHeaderCheck() {
+  const need = {
+    KOBUTSU: ['買取日','郵便番号','顧客名','☑','バイヤー','現場名','No.','ブランド名','ジャンル','ライン',
+              '商品名(製品名、金性)','種別','詳細','数量','上代','下代','予測上代','卸先','備考',
+              '丁目番地号','職業','生年月日','流入','確認の方法','番号/その他','対応方法'],
+    SHOHIN:  ['買取日','No.','重量(g)','上代','下代','予測上代']
+  };
+  [['KOBUTSU', CONFIG.SS.KOBUTSU, CONFIG.HEADER_ROW.KOBUTSU],
+   ['SHOHIN',  CONFIG.SS.SHOHIN,  CONFIG.HEADER_ROW.SHOHIN]].forEach(([label, id, hr]) => {
+    const ss = SpreadsheetApp.openById(id);
+    Object.values(BUYERS).forEach(b => {
+      const sh = ss.getSheetByName(b.key);
+      if (!sh) { Logger.log('%s/%s: タブなし', label, b.key); return; }
+      const h = resolveHeaders_(sh, hr);
+      const missing = need[label].filter(k => !h[k]);
+      Logger.log('%s/%s: %s', label, b.key,
+        missing.length ? '★未解決=' + missing.join(',') : '全キー解決OK（' + Object.keys(h).length + '列）');
     });
-    const text = await res.text();
-    try{ return JSON.parse(text); }
-    catch(e){
-      const err = new Error('GASの応答が不正です（ログイン画面等が返却）。デプロイ設定「アクセスできるユーザー: 全員」を確認してください');
-      err.isConfig = true; throw err;
-    }
-  }catch(err){
-    if(err && err.name==='AbortError'){ err.isTimeout=true; }
-    throw err;
-  }finally{ clearTimeout(timer); }
-}
-
-// 失敗時の自己診断: 軽量ping(5秒)で「GASに届くか」を切り分ける
-async function quickPing(){
-  const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),5000);
-  try{
-    const res=await fetch(GAS_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},
-      redirect:'follow',signal:ctl.signal,body:JSON.stringify({mode:'ping', lite:true})});
-    const j=JSON.parse(await res.text());
-    return !!j.ok;
-  }catch(e){ return false; }
-  finally{ clearTimeout(t); }
-}
-
-let _sending=false;
-async function submitReal(){
-  if(_sending) return;                                  // 二重送信ガード
-  const btn = document.querySelector('.payline button.go');
-  const p = buildPayload();
-  const miss=[];
-  if(!p.buyer) miss.push('・担当（バイヤー）');
-  if(!p.genba.trim()) miss.push('・現場名');
-  if(!p.channel) miss.push('・きっかけ');
-  if(!p.person.name.trim()) miss.push('・本人確認の氏名');
-  if(!p.items.length) miss.push('・品物（1件以上）');
-  if(miss.length){ await alertModal('未入力の必須項目があります', miss.join('\n')); return; }
-  if(p.items.some(it=>!it.gd)){
-    if(!(await confirmModal('確認', '下代（買取額）が0円の品物があります。このまま送信しますか？'))) return;
-  }
-  _sending=true; btn.disabled = true; btn.textContent = '送信中…';
-  try{
-    dbg('送信開始 txId='+p.txId.slice(0,8)+'… 品物'+p.items.length+'点');
-    const _t0=Date.now();
-    const r = await postToGas(p, 45000);   // 帳簿処理が重い日でも応答を待ち切る(45秒)
-    dbg('応答 '+(Date.now()-_t0)+'ms: '+(r.ok?('ok '+(r.nos||[]).join(',')):'error'));
-    if(r.trace) dbg('GASトレース: '+r.trace.join(' → '));
-    if(!r.ok && r.failedStep) dbg('失敗工程: '+r.failedStep);
-    if(r.ok){
-      // 呼び出し元の保留・同一txIdの保留を自動削除(残骸防止)
-      const q2=qLoad().filter(q=>!((q.payload&&q.payload.txId&&q.payload.txId===p.txId)||(RECALLED_AT&&q.savedAt===RECALLED_AT)));
-      qSave(q2); RECALLED_AT=null; renderQueueBadge();
-      let msg = '管理番号: ' + r.nos.join(', ');
-      if(r.warnings && r.warnings.length) msg += '\n\n[注意]\n' + r.warnings.join('\n');
-      // 読取を使わなかった場合など未保存の画像があれば、初期化前に保管（最大8秒・失敗しても取引は完了済み）
-      const pend={};
-      if(IMAGES.denpyo && !FILE_IDS.denpyo) pend.denpyo=IMAGES.denpyo;
-      if(IMAGES.license && !FILE_IDS.license) pend.license=IMAGES.license;
-      const pendItems=IMAGES.items.filter((b,i)=>!FILE_IDS.items[i]);
-      if(pendItems.length) pend.items=pendItems;
-      if(Object.keys(pend).length){
-        btn.textContent='画像を保管中…';
-        try{
-          const up=await Promise.race([ postToGas({mode:'upload', images:pend, assignNo:r.nos[0]}, 30000),
-                                        new Promise(res=>setTimeout(()=>res(null),8000)) ]);
-        }catch(e){}
-      }
-      await alertModal('送信完了', msg);
-      resetDemo();
-    }else{
-      await alertModal('送信エラー' + (r.failedStep ? '（' + r.failedStep + '）' : ''),
-        r.error + '\n\nもう一度お試しください。直らない場合は事務所へ連絡。');
-    }
-  }catch(err){
-    if(err.isConfig){
-      await alertModal('GAS設定エラー', err.message + '\n\n（このエラーは再送しても直りません。保留には入れていません）');
-    }else{
-      dbg('通信失敗: '+(err.isTimeout?'45秒タイムアウト':(err.message||err)));
-      // v6.6: タイムアウト時はまず「実は転記済みか」をGASに照会(応答だけ落ちた場合を自動判定)
-      if(err.isTimeout){
-        btn.textContent = '転記状況を確認中…';
-        try{
-          const st = await postToGas({mode:'txstatus', txIds:[p.txId]}, 20000);
-          const me = st.ok && st.results && st.results[p.txId];
-          if(me && me.written){
-            dbg('照会結果: 転記済み '+me.nos.join(','));
-            _txStatusCache[p.txId]=me;
-            await alertModal('送信は完了していました', '応答は届きませんでしたが、GAS側で転記が確認できました。\n管理番号: '+me.nos.join(', ')+'\n（保留には入れていません。このまま次の取引へ進めます）');
-            resetDemo(); return;
-          }
-          dbg('照会結果: 未転記→保留へ');
-        }catch(e2){ dbg('照会も失敗: '+(e2.message||e2)); }
-      }
-      const queue = qLoad();
-      queue.push({ savedAt: new Date().toISOString(), payload: p });
-      qSave(queue); renderQueueBadge();
-      // 自己診断: GAS自体に届くかを軽量pingで確認して原因を表示
-      btn.textContent = '原因を診断中…';
-      const reachable = await quickPing();
-      const diag = err.isTimeout
-        ? '原因: 45秒以内に応答がありませんでした。ただし送信自体はGASに届いて処理されている場合があります。このフォームの再送は同じ取引を二重転記しない仕組みのため、そのまま「保留分を再送」で安全に確定できます'
-        : reachable
-          ? '診断: GASへの疎通は正常です。一時的な通信エラーの可能性が高く、再送すればそのまま通る見込みです'
-          : '診断: GASに到達できません。①電波 ②広告ブロッカー等がgoogle.comへの通信を遮断していないか ③GASのデプロイ設定 を確認してください';
-      await alertModal('通信に失敗しました（' + queue.length + '件保留中）',
-        '入力内容は端末に保存済みです。\n' + diag + '\n\n「保留分を再送」からいつでも送信できます。');
-    }
-  }finally{
-    _sending=false; btn.disabled = false; btn.textContent = '送信する';
-  }
-}
-
-let _resending=false;
-async function resendQueue(){
-  if(_resending) return;
-  const queue = qLoad();
-  if(!queue.length){ await alertModal('保留なし', '保留中の送信はありません。'); return; }
-  _resending=true;
-  const b=document.getElementById('resendBtn');
-  const orig=b.innerHTML; b.innerHTML=IC.spin+' 再送中…（'+queue.length+'件）';
-  const remain = []; let done = 0; let configErr=null;
-  for(const q of queue){
-    try{ const r = await postToGas(q.payload, 45000);
-      if(r.ok){ done++; dbg('再送成功: '+(r.nos||[]).join(',')+((r.warnings||[]).some(w=>w.indexOf('[冪等]')===0)?'(転記済みの確定)':'')); }
-      else { remain.push(q); dbg('再送エラー: '+(r.failedStep?'['+r.failedStep+'] ':'')+r.error); } }
-    catch(e){ remain.push(q); dbg('再送通信失敗: '+(e.message||e)); if(e.isConfig) configErr=e.message; }
-  }
-  qSave(remain); 
-  _resending=false; b.innerHTML=orig; renderQueueBadge();
-  let msg='送信できた件数: '+done+'件\n残り保留: '+remain.length+'件';
-  if(configErr) msg+='\n\nGAS設定エラー: '+configErr;
-  else if(remain.length) msg+='\n（電波の良い場所で再度お試しください）';
-  await alertModal('再送結果', msg);
-}
-// ===== v6.6 保留ビューア: 中身の確認・転記状況の照会・フォームへの呼び出し =====
-let _txStatusCache = {};   // txId → {written, nos, time}
-function escH(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function _qSummary(q, i){
-  const p=q.payload||{}, items=p.items||[];
-  const gd=items.reduce((s,it)=>s+(+it.gd||0)*1,0);
-  const when=(q.savedAt||'').replace('T',' ').slice(5,16);
-  const st=_txStatusCache[p.txId];
-  const stTxt = !p.txId ? '<b style="color:var(--shu);">旧形式(txIdなし)・再送で重複の恐れ</b>'
-    : st===undefined ? '未確認(「転記状況を確認」を押す)'
-    : st.written ? '<b style="color:var(--shu);">転記済み '+st.nos.join(',')+'('+st.time+')→破棄推奨</b>'
-    : '<b style="color:var(--ok,#2e7d32);">未転記→呼び出し/再送OK</b>';
-  return '<div style="border:1px solid var(--line,#ccc);border-radius:8px;padding:8px;margin-bottom:8px;font-size:12.5px;line-height:1.6;">'
-    + '<b>'+(i+1)+'. '+escH(p.buyer||'?')+'（'+escH(p.genba||'?')+'）</b> '+items.length+'点 下代¥'+gd.toLocaleString()+'<br>'
-    + '保存: '+when+'　状況: '+stTxt+'<br>'
-    + '<button class="sec" style="font-size:12px;padding:5px 10px;margin-top:4px;" onclick="recallFromQueue('+i+')">フォームに呼び出す</button> '
-    + '<button class="sec" style="font-size:12px;padding:5px 10px;margin-top:4px;" onclick="deleteFromQueue('+i+')">この1件を削除</button>'
-    + '</div>';
-}
-async function openQueueViewer(){
-  const queue=qLoad();
-  if(!queue.length){ await alertModal('保留なし','保留中の送信はありません。'); return; }
-  const html=queue.map((q,i)=>_qSummary(q,i)).join('');
-  const act=await _dlgHtml('保留中の送信（'+queue.length+'件）', html,
-    [{label:'転記状況を確認', value:'check', sec:true},{label:'閉じる', value:'close'}]);
-  if(act==='check'){ await checkQueueStatus(); openQueueViewer(); }
-}
-async function checkQueueStatus(){
-  const ids=qLoad().map(q=>(q.payload||{}).txId).filter(Boolean);
-  if(!ids.length) return;
-  try{
-    const r=await postToGas({mode:'txstatus', txIds:ids}, 20000);
-    if(r.ok) Object.assign(_txStatusCache, r.results||{});
-  }catch(e){ await alertModal('照会失敗','転記状況を取得できませんでした: '+(e.message||e)); }
-}
-async function recallFromQueue(i){
-  const bg=document.getElementById('dlgBg'); bg.classList.remove('show'); _dlgResolve=null;
-  const q=qLoad()[i]; if(!q) return;
-  const p=q.payload||{};
-  const st=_txStatusCache[p.txId];
-  if(st && st.written){
-    if(!(await confirmModal('転記済みの取引です','この取引は既に '+st.nos.join(',')+' で転記済みです。呼び出して再送信しても二重転記はされません（同じ管理番号が返るだけ）。\n内容を修正して送るとその修正は帳簿に反映されない点に注意してください。呼び出しますか？'))) return;
-  }
-  if(!p.txId){
-    if(!(await confirmModal('旧形式の保留です','この保留は旧バージョンで保存されたため転記済みか自動判定できません。帳簿を目視確認してから送信してください。呼び出しますか？'))) return;
-  }
-  TX_ID = p.txId || newTxId();
-  RECALLED_AT = q.savedAt || null;
-  setV('buyer',p.buyer); setV('genba',p.genba); setV('channel',p.channel); if(typeof updateConv==='function')updateConv();
-  setV('taiou',p.taiou); setV('promo',p.promo); setV('biko',p.biko);
-  const per=p.person||{};
-  setV('p_name',per.name); setV('p_zip',per.zip); setV('p_banchi',per.banchi); setV('p_birth',per.birth);
-  setV('p_method',per.method||'免許証'); setV('p_shokugyo',per.shokugyo); setV('p_num',per.num);
-  document.getElementById('items').innerHTML='';
-  (p.items||[]).forEach(it=>{
-    const pr={genre:it.genre, oroshi:it.oroshi, brand:it.brand, line:it.line, iname:it.iname,
-      wt:it.wt, yosoku:it.yosoku, qty:it.qty, jd:it.jd, gd:it.gd};
-    if(it.genre==='金券類'){
-      pr.ktype=it.ktype||'テレホンカード';
-      if(pr.ktype==='テレホンカード'){ if(it.kdofree){pr.kdo='その他度数'; pr.kdofree=it.kdofree;} else pr.kdo=it.detail||'50度数'; }
-      else pr.kfree=it.detail||'';
-    }
-    if(it.genre==='古銭') pr.kosen=it.detail||'';
-    addItem(pr);
   });
-  recalc(); dbg('保留#'+(i+1)+'をフォームへ呼び出し(txId='+TX_ID.slice(0,8)+'…)');
-  window.scrollTo({top:0, behavior:'smooth'});
-  await alertModal('呼び出しました','保留の内容をフォームに展開しました。確認・修正のうえ「送信する」を押してください。\n送信が成功するとこの保留は自動で消えます。');
-}
-async function deleteFromQueue(i){
-  const bg=document.getElementById('dlgBg'); bg.classList.remove('show'); _dlgResolve=null;
-  if(!(await confirmModal('保留の削除','保留'+(i+1)+'件目を端末から削除します。帳簿には送信されません。よろしいですか？'))) return;
-  const queue=qLoad(); queue.splice(i,1); qSave(queue); renderQueueBadge();
-  if(queue.length) openQueueViewer();
-}
-function setV(id,v){const e=document.getElementById(id); if(e) e.value=(v==null?'':v);}
-
-// ===== v6.6 画面内デバッグログ(デバッグ版のみ) =====
-const _dbgLines=[];
-function dbg(msg){
-  const t=new Date().toTimeString().slice(0,8);
-  _dbgLines.push(t+' '+msg); if(_dbgLines.length>60)_dbgLines.shift();
-  try{console.log('[MUSE]',msg);}catch(e){}
-  const el=document.getElementById('dbgLog');
-  if(el){ el.textContent=_dbgLines.join('\n'); el.scrollTop=el.scrollHeight; }
 }
 
-async function discardQueue(){
-  const n=qLoad().length;
-  if(!n){ await alertModal('保留なし','破棄する保留はありません。'); return; }
-  if(!(await confirmModal('保留分の破棄', '保留中の'+n+'件を端末から削除します。帳簿には送信されません。\n（既にSlack報告や帳簿転記が確認できている取引の残骸を消す場合に使用）\nよろしいですか？'))) return;
-  qSave([]); renderQueueBadge();
-  await alertModal('破棄しました','保留はすべて削除されました。');
+/* ==================== Phase 2: 一括OCR（Claude Haiku 4.5） ==================== */
+
+const OCR_CONFIG = {
+  MODEL: 'claude-haiku-4-5-20251001',
+  ENDPOINT: 'https://api.anthropic.com/v1/messages',
+  VERSION: '2023-06-01',
+  MAX_TOKENS: 1024
+};
+
+/**
+ * フォームからの {mode:'ocr', images:{denpyo, license}} を処理。
+ * 片方のみでも可。転記は行わず読取結果だけ返す（doPost通常モードとは独立）。
+ */
+function handleOcr_(payload) {
+  const warnings = [];
+  const apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+  if (!apiKey) {
+    return json_({ ok: false, error: 'APIキー未設定: Apps Scriptの「プロジェクトの設定→スクリプトプロパティ」に ANTHROPIC_API_KEY を追加してください' });
+  }
+  const imgs = payload.images || {};
+  const blocks = [];
+  const attach = (dataUrl, label) => {
+    if (!dataUrl) return false;
+    const m = /^data:(image\/(?:jpeg|png|webp|gif));base64,(.+)$/.exec(dataUrl);
+    if (!m) { warnings.push('[OCR] ' + label + 'の画像形式を解釈できません'); return false; }
+    blocks.push({ type: 'text', text: '【' + label + 'として撮影された画像】' });
+    blocks.push({ type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } });
+    return true;
+  };
+  const hasD = attach(imgs.denpyo, '買取伝票');
+  const hasL = attach(imgs.license, '免許証');
+  if (!hasD && !hasL) return json_({ ok: false, error: '読取対象の画像がありません（伝票か免許証を撮影してください）' });
+
+  blocks.push({ type: 'text', text: buildOcrPrompt_(hasD, hasL) });
+
+  let parsed;
+  try {
+    const res = UrlFetchApp.fetch(OCR_CONFIG.ENDPOINT, {
+      method: 'post',
+      contentType: 'application/json',
+      muteHttpExceptions: true,
+      headers: { 'x-api-key': apiKey, 'anthropic-version': OCR_CONFIG.VERSION },
+      payload: JSON.stringify({
+        model: OCR_CONFIG.MODEL,
+        max_tokens: OCR_CONFIG.MAX_TOKENS,
+        messages: [{ role: 'user', content: blocks }]
+      })
+    });
+    const code = res.getResponseCode();
+    const body = JSON.parse(res.getContentText());
+    if (code !== 200) {
+      return json_({ ok: false, error: 'OCR APIエラー(' + code + '): ' + (body.error && body.error.message || res.getContentText().slice(0, 200)) });
+    }
+    const text = (body.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+    parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
+  } catch (err) {
+    return json_({ ok: false, error: 'OCR結果の取得に失敗: ' + err });
+  }
+
+  // ---- 読取結果を入力規則・バイヤー登録に照合（許可外は空欄化＋警告） ----
+  const d = parsed.denpyo || {};
+  const l = parsed.license || {};
+  if (d.detected) {
+    if (d.buyer && !BUYERS[d.buyer]) { warnings.push('[OCR] 担当「' + d.buyer + '」は未登録のため空欄にしました'); d.buyer = ''; }
+    d.channel  = sanitize_(d.channel || '',  Object.keys(CHANNEL_TO_NYURYU), 'きっかけ(OCR)', warnings);
+    d.shokugyo = sanitize_(d.shokugyo || '', CONFIG.VALID.shokugyo,          '職業(OCR)',     warnings);
+  }
+  if (l.detected) {
+    l.type = sanitize_(l.type || '', CONFIG.VALID.kakunin, '確認の方法(OCR)', warnings);
+    if (l.type === 'マイナンバーカード' && l.num) { l.num = ''; warnings.push('[保護] マイナンバーカードの番号は記録禁止のため破棄しました'); }
+  }
+  (parsed.problems || []).forEach(p => warnings.push('[OCR判定] ' + p));
+  if (parsed.match && parsed.match.checked && parsed.match.same === false) {
+    warnings.push('[⚠突合NG] 伝票の顧客名と免許証の氏名が一致しません: ' + (parsed.match.note || '要確認'));
+  }
+  // ---- Drive一時保管へ保存（+1〜2秒。失敗してもOCR結果は返す） ----
+  const fileIds = {};
+  try {
+    const tempF = getFolder_([CONFIG.DRIVE.ROOT, CONFIG.DRIVE.TEMP]);
+    const ts = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyyMMdd_HHmmss');
+    if (imgs.denpyo)  fileIds.denpyo  = saveDataUrl_(tempF, imgs.denpyo,  'TMP_' + ts + '_伝票');
+    if (imgs.license) fileIds.license = saveDataUrl_(tempF, imgs.license, 'TMP_' + ts + '_身分証');
+  } catch (e) { warnings.push('[Drive] 一時保存に失敗（読取結果は有効）: ' + e); }
+
+  return json_({ ok: true, ocr: { denpyo: d, license: l, match: parsed.match || { checked: false } }, fileIds: fileIds, warnings: warnings });
 }
-function renderQueueBadge(){
-  const n_=qLoad().length;
-  const d=document.getElementById('discardBtn'); if(d) d.style.display = n_ ? 'block' : 'none';
-  const qv=document.getElementById('queueViewBtn'); if(qv) qv.style.display = n_ ? 'block' : 'none';
-  const el=document.getElementById('qbadge'); if(!el) return;
-  const n=qLoad().length;
-  el.style.display = n? 'inline-flex':'none';
-  el.textContent = n;
+
+function buildOcrPrompt_(hasD, hasL) {
+  return [
+'あなたは買取店の書類読取係です。上の画像を読み取り、次のJSONだけを出力してください（説明文・コードブロック記号は不要）。',
+'{"denpyo":{"detected":false,"buyer":"","genba":"","channel":"","customerName":"","zip":"","birth":"","shokugyo":""},',
+' "license":{"detected":false,"type":"","name":"","addr":"","banchi":"","birth":"","num":""},',
+' "match":{"checked":false,"same":true,"note":""},',
+' "problems":[]}',
+'',
+'規則:',
+'- detectedは「その種類の書類として読み取れた」場合のみtrue。ラベルと中身が食い違う場合（伝票の位置に免許証がある等）はproblemsに日本語で記載しdetectedは実際の種類に従う。不鮮明・ブレで読めない場合もproblemsに記載。',
+'- denpyo.buyer（担当）は担当者欄から。次のいずれかに完全一致させる: 八嶋真司/筒井涼介/藤原慶俊/袖井貢/原田峰行。姓のみ記載（例:「藤原」）なら該当者のフルネーム（藤原慶俊）に。判別不能は""。',
+'- denpyo.genbaは「場所：買取かざみどり（　）店」の括弧内の店名・会場名（例: 湯河原）。',
+'- denpyo.channelは「どのように弊社を知りましたか」のチェック欄から: 折込/ポスティング/声掛/紹介/看板/再来/その他 のいずれか。チェックが読めなければ""。',
+'- denpyo.customerNameは伝票のご署名欄の氏名（署名が読めなければお名前欄）。denpyo.zipは〒欄（例: 259-0301。ハイフン付き7桁に整形）。denpyo.birthは生年月日欄を和暦で（昭和・平成の丸印を元号に使う。例: 昭和24年10月16日）。denpyo.shokugyoは職業欄の丸印（会社員/自営業/主婦/なし/その他）。',
+'- license.typeは証明書の種類を判定: 免許証/マイナンバーカード/保険証/運転経歴書/在留カード/その他 のいずれか。「個人番号カード」と書かれたカードはマイナンバーカード。',
+'- 【重要】typeがマイナンバーカードの場合、個人番号（12桁のマイナンバー）は法律により記録禁止。numは必ず""とし、カード表面の他の番号も出力しない。numに値を入れてよいのは免許証番号（免許証のとき）のみ。',
+'- license.birthは和暦表記のまま（例: 昭和24年10月16日）。「生」「まで有効」等の語は除く。',
+'- license.addrは住所のうち都道府県市区町村町域まで（例: 神奈川県足柄下郡湯河原町中央）。license.banchiは丁目番地号を算用数字ハイフン区切りに正規化し（例: 四丁目２１番地１３→4-21-13）、建物名・部屋番号があれば半角スペースで続ける（例: 4-21-13 貴田荘）。',
+(hasD && hasL ? '- 伝票のcustomerName（署名）と身分証のnameが両方読めたらmatch.checked=true とし、同一人物か判定（姓名の漢字一致。旧字体・スペースの差は同一とみなす）。不一致ならsame=falseでnoteに両方の氏名を記載。' : '- 画像が1枚のためmatch.checked=false のままにする。'),
+'- 読めない項目はすべて""。推測で埋めない。'
+  ].join('\n');
 }
 
-// ===== 反映プレビュー描画 =====
-function submitForm(){
-  const p=buildPayload();
-  const buyer=p.buyer, pf=PREFIX[buyer]||'XX';
-  const route=CHANNEL_TO_ROUTE[p.channel], nyuryu=CHANNEL_TO_NYURYU[p.channel];
-  const today=new Date(), dstr=today.getFullYear()+'/'+(today.getMonth()+1)+'/'+today.getDate();
-  const rows=p.items.map((r,i)=>({...r, ys:pf+(2200+i), profit:(r.jd-r.gd)}));
-  const tj=rows.reduce((s,r)=>s+r.jd,0), tg=rows.reduce((s,r)=>s+r.gd,0);
-  const tbl=(head,body)=>`<div class="otbl"><table><thead><tr>${head.map(h=>`<th>${h}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div>`;
-  let html='';
-
-  html+=`<div class="out"><div class="oh"><span class="n">↳</span>きっかけ → 経路・流入の自動変換</div>`+
-    `<div class="kv"><div class="k">きっかけ（伝票）</div><div class="v o">${p.channel}</div>`+
-    `<div class="k">経路（買取伝票）</div><div class="v a">${route||'（空）※査定件数集計に載りません'}</div>`+
-    `<div class="k">流入（古物台帳）</div><div class="v a">${nyuryu}</div>`+
-    `<div class="k">対応方法（古物台帳）</div><div class="v f">${p.taiou}</div></div></div>`;
-
-  const koh=["No.","買取日","ジャンル","種別","詳細","ブランド","ライン","商品名","重量","数量","上代","下代","粗利","卸先","顧客名","郵便番号","丁目番地号","生年月日","職業","確認方法","流入"];
-  const kb=rows.map(r=>`<tr><td class="a">${r.ys}</td><td class="a">${dstr}</td><td class="f">${r.genre}</td><td class="f">${r.ktype||'-'}</td><td class="f">${r.detail||'-'}</td><td class="f">${r.brand||'-'}</td><td class="f">${r.line||'-'}</td><td class="f">${r.iname||'-'}</td><td class="f">${r.wt||'-'}</td><td class="f">${r.qty}</td><td class="f">¥${r.jd.toLocaleString()}</td><td class="f">¥${r.gd.toLocaleString()}</td><td class="a">¥${r.profit.toLocaleString()}</td><td class="f">${r.oroshi}</td><td class="o">${OCR.name}</td><td class="o">${OCR.zip}</td><td class="o">${OCR.banchi}</td><td class="o">${OCR.birth}</td><td class="o">${OCR.shokugyo}</td><td class="o">${OCR.method}</td><td class="a">${nyuryu}</td></tr>`).join("");
-  html+=`<div class="out"><div class="oh"><span class="n">1</span>古物台帳【MUSE】／${buyer}（${rows.length}点）</div>${tbl(koh,kb)}</div>`;
-
-  const soh=["No.","ジャンル","ブランド","商品名","重量","数量","予測上代","上代","下代","粗利","卸先"];
-  const sb=rows.map(r=>`<tr><td class="a">${r.ys}</td><td class="f">${r.genre}</td><td class="f">${r.brand||'-'}</td><td class="f">${r.iname||r.detail||'-'}</td><td class="f">${r.wt||'-'}</td><td class="f">${r.qty}</td><td class="f">${r.yosoku?'¥'+r.yosoku.toLocaleString():'-'}</td><td class="f">¥${r.jd.toLocaleString()}</td><td class="f">¥${r.gd.toLocaleString()}</td><td class="a">¥${r.profit.toLocaleString()}</td><td class="f">${r.oroshi}</td></tr>`).join("");
-  html+=`<div class="out"><div class="oh"><span class="n">2</span>商品登録シート『MUSE』／${buyer}</div>${tbl(soh,sb)}</div>`;
-
-  const inv=rows.filter(r=>r.oroshi==="グランチャ"||r.oroshi==="グランチャ宝石");
-  let invHtml;
-  if(inv.length===0) invHtml=`<div class="slacknote">今回はグランチャ向けの品物がないため、在庫管理表には載りません（グランチャに卸す品物のみ）。</div>`;
-  else{ const ioh=["NO","ジャンル","品名","重量","仕入原価","目標売上","仕入日","仕入先"];
-    const ib=inv.map(r=>`<tr><td class="a">${r.ys}</td><td class="f">${r.genre}</td><td class="f">${r.dispname}</td><td class="f">${r.wt||'-'}</td><td class="f">¥${r.gd.toLocaleString()}</td><td class="f">${r.yosoku?'¥'+r.yosoku.toLocaleString():'-'}</td><td class="a">${dstr}</td><td class="a">（書込禁止）</td></tr>`).join("");
-    invHtml=tbl(ioh,ib); }
-  html+=`<div class="out"><div class="oh"><span class="n">3</span>MUSE在庫管理表／${buyer}（グランチャ向けのみ）</div>${invHtml}</div>`;
-
-  html+=`<div class="out"><div class="oh"><span class="n">4</span>MUSE買取伝票シート／${buyer}伝票（当日ブロックの空きNo.列）</div>`+
-    `<div class="kv"><div class="k">日付</div><div class="v a">${dstr}</div><div class="k">経路</div><div class="v a">${route||'（空）'}</div><div class="k">結果</div><div class="v a">成約</div><div class="k">上代（合算）</div><div class="v a">¥${tj.toLocaleString()}</div><div class="k">下代（合算）</div><div class="v a">¥${tg.toLocaleString()}</div><div class="k">粗利（合算）</div><div class="v a">¥${(tj-tg).toLocaleString()}</div></div></div>`;
-
-  const slack=`【上代】¥${tj.toLocaleString()}-\n【下代】¥${tg.toLocaleString()}-\n【粗利】${(tj-tg)<0?'-¥'+Math.abs(tj-tg).toLocaleString():'¥'+(tj-tg).toLocaleString()}-\n【流入】${nyuryu}\n【その他】${p.biko||''}\n【販促品】${p.promo||'なし'}`;
-  html+=`<div class="out"><div class="oh"><span class="n">5</span>Slack 決済報告（Phase 2 参考）</div><div class="slacknote">テキスト＋画像が投稿されます：</div><div class="slackbox">${slack}\n\n添付: 伝票 ／ 身分証 ／ 商品画像（${rows.length<=3?rows.length:'1〜3'}枚）</div></div>`;
-
-  html+=`<div class="out"><div class="oh"><span class="n">{}</span>GASへ送るデータ（フォームのキー）</div><pre class="json">${esc(JSON.stringify(p,null,2))}</pre></div>`;
-
-  document.getElementById('outputs').innerHTML=html;
-  document.getElementById('form').style.display='none';
-  document.getElementById('submitBar').style.display='none';
-  document.getElementById('result').classList.add('show');
-  window.scrollTo({top:0,behavior:'smooth'});
+/* ==================== 接続テスト（mode:'ping'） ==================== */
+/** HTMLアップロード前の疎通確認用。シートへの書込・API課金は一切発生しない。 */
+function handlePing_() {
+  const out = { ok: true, version: 'GAS v3.2', time: new Date().toISOString() };
+  out.apiKeySet = !!PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+  out.sheets = {};
+  const chk = (label, id, tabs) => {
+    if (!id) { out.sheets[label] = 'ID未設定（CONFIG.SSを確認）'; return; }
+    try {
+      const ss = SpreadsheetApp.openById(id);
+      const missing = tabs.filter(t => !ss.getSheetByName(t));
+      out.sheets[label] = 'OK: 「' + ss.getName() + '」' + (missing.length ? ' ★タブ未検出: ' + missing.join(',') : ' （5名タブ確認済み）');
+    } catch (e) { out.sheets[label] = 'アクセス不可: ' + e; }
+  };
+  const keys = Object.values(BUYERS).map(b => b.key);
+  const dsheets = Object.values(BUYERS).map(b => b.denpyoSheet);
+  chk('古物台帳', CONFIG.SS.KOBUTSU, keys);
+  chk('商品登録', CONFIG.SS.SHOHIN, keys);
+  chk('在庫管理', CONFIG.SS.ZAIKO, keys);
+  chk('買取伝票', CONFIG.SS.DENPYO, dsheets);
+  out.buyers = Object.keys(BUYERS);
+  return json_(out);
 }
-function esc(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
-function resetDemo(){ location.reload(); }
 
-// 初期表示（デバッグ版）: OCRが入れるはずの値をサンプルで事前入力（2026/7/8 湯河原・小松様）
-document.getElementById('buyer').value='藤原慶俊';
-document.getElementById('genba').value='湯河原';
-document.getElementById('channel').value='声掛';
-updateConv();
-document.getElementById('p_name').value='小松豊子';
-document.getElementById('p_zip').value='259-0301';
-document.getElementById('p_banchi').value='4-21-13 貴田荘';
-document.getElementById('p_birth').value='昭和24年10月16日';
-document.getElementById('p_shokugyo').value='主婦';
-document.getElementById('p_method').value='マイナンバーカード';
-document.getElementById('p_num').value='';
-document.getElementById('p_num').placeholder='マイナンバーカードのため空欄（個人番号の記録は法律で禁止）';
-document.getElementById('personSum').innerHTML='<span class="psum-ok">'+IC.check+' 本人確認 サンプル入力済み：小松豊子 様（タップで確認・修正）</span>';
-addItem({genre:"古銭",  iname:"古銭まとめ",           gd:500,  oroshi:"ワタル"});
-addItem({genre:"その他", iname:"イミテーションまとめ", gd:500,  oroshi:"タグ無し"});
-addItem({genre:"その他", iname:"カメオ",               gd:1300, oroshi:"タグ無し"});
-renderQueueBadge();
-checkGas();
-</script>
-<div class="dlg-bg" id="dlgBg">
-  <div class="dlg" role="dialog" aria-modal="true">
-    <h4 id="dlgTitle"></h4>
-    <pre id="dlgBody"></pre>
-    <div class="btns" id="dlgBtns"></div>
-  </div>
-</div>
-</body>
-</html>
+/* ==================== Phase 2: Drive保存・自動整理 ==================== */
+
+/** パス配列でフォルダを取得（無ければ作成）。例: ['MUSE_取引記録','2026','07','伝票'] */
+function getFolder_(path) {
+  let f = DriveApp.getRootFolder();
+  for (const name of path) {
+    const it = f.getFoldersByName(name);
+    f = it.hasNext() ? it.next() : f.createFolder(name);
+  }
+  return f;
+}
+
+/** dataURLをJPEGとして保存し fileId を返す */
+function saveDataUrl_(folder, dataUrl, name) {
+  const m = /^data:(image\/[a-z]+);base64,(.+)$/.exec(dataUrl);
+  if (!m) throw new Error('画像形式不正');
+  const blob = Utilities.newBlob(Utilities.base64Decode(m[2]), m[1], name + '.jpg');
+  return folder.createFile(blob).getId();
+}
+
+/** mode:'upload' — 画像を一時保管へ（商品画像／OCR未実行の伝票・身分証） */
+function handleUpload_(payload) {
+  const warnings = [];
+  const out = { denpyo: null, license: null, items: [] };
+  try {
+    const no = payload.assignNo || null;   // 送信後の後追い保存: 管理番号があれば本置き場へ直接確定
+    const today = new Date();
+    const folderFor = (kind) => no
+      ? getFolder_([CONFIG.DRIVE.ROOT, Utilities.formatDate(today, 'Asia/Tokyo', 'yyyy'), Utilities.formatDate(today, 'Asia/Tokyo', 'MM'), kind])
+      : getFolder_([CONFIG.DRIVE.ROOT, CONFIG.DRIVE.TEMP]);
+    const ts = Utilities.formatDate(today, 'Asia/Tokyo', 'yyyyMMdd_HHmmss');
+    const nameFor = (suffix) => no ? (no + '_' + suffix) : ('TMP_' + ts + '_' + suffix);
+    const imgs = payload.images || {};
+    if (imgs.denpyo)  out.denpyo  = saveDataUrl_(folderFor('伝票'),   imgs.denpyo,  nameFor('伝票'));
+    if (imgs.license) out.license = saveDataUrl_(folderFor('身分証'), imgs.license, nameFor('身分証'));
+    (imgs.items || []).forEach((b, i) => { out.items.push(saveDataUrl_(folderFor('商品'), b, nameFor('商品' + (i + 1)))); });
+    // v3.4: 送信後の後追い保存は、同じ管理番号の未投稿Slackキュー行へ画像を合流させる
+    if (no && (out.denpyo || out.license || out.items.length)) {
+      try { mergeQueueFileIds_(no, out); }
+      catch (e) { warnings.push('[Slack] キューへの画像合流に失敗（画像自体はDrive保存済み）: ' + e); }
+    }
+  } catch (e) { return json_({ ok: false, error: 'Drive保存に失敗: ' + e }); }
+  return json_({ ok: true, fileIds: out, warnings: warnings });
+}
+
+/** 送信成功時: 仮名ファイルを管理番号でリネームし 年/月/種別 へ移動 */
+function finalizeImages_(fileIds, no1, today, warnings) {
+  if (!fileIds || !no1) return fileIds || {};
+  const y = Utilities.formatDate(today, 'Asia/Tokyo', 'yyyy');
+  const mo = Utilities.formatDate(today, 'Asia/Tokyo', 'MM');
+  const mv = (id, kind, suffix) => {
+    if (!id) return null;
+    try {
+      const f = DriveApp.getFileById(id);
+      f.setName(no1 + '_' + suffix + '.jpg');
+      f.moveTo(getFolder_([CONFIG.DRIVE.ROOT, y, mo, kind]));
+      return id;
+    } catch (e) { warnings.push('[Drive] ' + suffix + 'の整理に失敗: ' + e); return id; }
+  };
+  const out = {};
+  out.denpyo  = mv(fileIds.denpyo,  '伝票',   '伝票');
+  out.license = mv(fileIds.license, '身分証', '身分証');
+  out.items = (fileIds.items || []).map((id, i) => mv(id, '商品', '商品' + (i + 1)));
+  return out;
+}
+
+/** 夜間: 一時保管の48時間超ファイルを削除（不成約・入力放棄のゴミ掃除） */
+function cleanupTemp() {
+  const tempF = getFolder_([CONFIG.DRIVE.ROOT, CONFIG.DRIVE.TEMP]);
+  const limit = new Date(Date.now() - CONFIG.DRIVE.TEMP_RETENTION_HOURS * 3600 * 1000);
+  const it = tempF.getFiles();
+  let n = 0;
+  while (it.hasNext()) { const f = it.next(); if (f.getDateCreated() < limit) { f.setTrashed(true); n++; } }
+  Logger.log('cleanupTemp: %s件削除', n);
+}
+
+/** 月次: 保存期間（3年）を超えた月フォルダを削除 */
+function cleanupRetention() {
+  const root = getFolder_([CONFIG.DRIVE.ROOT]);
+  const limit = new Date(); limit.setFullYear(limit.getFullYear() - CONFIG.DRIVE.RETENTION_YEARS);
+  const years = root.getFolders();
+  while (years.hasNext()) {
+    const yf = years.next();
+    if (!/^\d{4}$/.test(yf.getName())) continue;
+    const months = yf.getFolders();
+    while (months.hasNext()) {
+      const mf = months.next();
+      if (!/^\d{2}$/.test(mf.getName())) continue;
+      const d = new Date(+yf.getName(), +mf.getName() - 1 + 1, 1); // 当該月の翌月1日
+      if (d < limit) { mf.setTrashed(true); Logger.log('保存期間超過で削除: %s/%s', yf.getName(), mf.getName()); }
+    }
+  }
+}
+
+/* ==================== Phase 2: Slack決済報告（キュー方式・実体添付） ==================== */
+/* 送信処理からSlack投稿を分離することで、現場の送信応答2〜3秒を維持する。
+ * 投稿は1分毎トリガー processSlackQueue が実行（最大1分の遅延・実体添付）。 */
+
+/* ==================== v3.2 冪等化（二重転記防止） ==================== */
+/* _TxLog: 古物台帳ブック内の非表示シート。フォーム発行のtxId→管理番号を記録。
+ * 自前シートで数式プレフィルが無いため、ここに限り appendRow を使用してよい。 */
+function getTxLogSheet_() {
+  const ss = SpreadsheetApp.openById(CONFIG.SS.KOBUTSU);
+  let sh = ss.getSheetByName('_TxLog');
+  if (!sh) { sh = ss.insertSheet('_TxLog'); sh.hideSheet();
+    sh.getRange(1, 1, 1, 4).setValues([['txId', '時刻', 'バイヤー', 'nos(JSON)']]); }
+  return sh;
+}
+function findTxLog_(txId) {
+  const sh = getTxLogSheet_();
+  const hit = sh.getRange('A:A').createTextFinder(txId).matchEntireCell(true).findNext();
+  if (!hit) return null;
+  const v = sh.getRange(hit.getRow(), 1, 1, 4).getValues()[0];
+  return { time: Utilities.formatDate(new Date(v[1]), 'Asia/Tokyo', 'MM/dd HH:mm'),
+           buyer: String(v[2]), nos: JSON.parse(v[3] || '[]') };
+}
+function recordTxLog_(txId, buyer, nos, result) {
+  try {
+    getTxLogSheet_().appendRow([txId, new Date(), buyer, JSON.stringify(nos)]);
+    CacheService.getScriptCache().put('tx_' + txId, JSON.stringify(result), 21600);  // 6時間
+  } catch (e) { /* 記録失敗は転記成功を妨げない（次回再送時はシート走査で捕捉） */ }
+}
+
+/* _DebugLog: 全取引のトレース／エラーを永続記録（応答がタイムアウトで消えても事後確認可能）。
+ * 自前シートのため appendRow 可。1000行超で古い方から削減。 */
+function debugLog_(txId, status, ms, detail, nos) {
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.SS.KOBUTSU);
+    let sh = ss.getSheetByName('_DebugLog');
+    if (!sh) { sh = ss.insertSheet('_DebugLog'); sh.hideSheet();
+      sh.getRange(1, 1, 1, 6).setValues([['時刻', 'txId', '結果', '所要ms', '詳細（トレース／エラー）', 'nos']]); }
+    sh.appendRow([new Date(), txId || '(なし)', status, ms, String(detail).slice(0, 2000), (nos || []).join(',')]);
+    const last = sh.getLastRow();
+    if (last > 1001) sh.deleteRows(2, last - 1001);
+  } catch (e) { /* ログ失敗は本処理を妨げない */ }
+}
+
+function getQueueSheet_() {
+  const ss = SpreadsheetApp.openById(CONFIG.SS.KOBUTSU);
+  let sh = ss.getSheetByName(CONFIG.SLACK_QUEUE_SHEET);
+  if (!sh) { sh = ss.insertSheet(CONFIG.SLACK_QUEUE_SHEET); sh.hideSheet();
+    sh.getRange(1, 1, 1, 5).setValues([['時刻', '状態', 'チャンネル', 'メッセージ', 'fileIds(JSON)']]); }
+  return sh;
+}
+
+/** v3.4: 後追い保存された伝票/身分証/商品画像を、未投稿の決済報告キュー行へ合流させる。
+ *  hold行（画像待ち）は合流と同時にpendingへ昇格し、次の1分毎トリガーで即投稿される。 */
+function mergeQueueFileIds_(no, add) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10 * 1000)) throw new Error('ロック取得タイムアウト');
+  try {
+    const sh = getQueueSheet_();
+    const last = sh.getLastRow();
+    if (last < 2) return;
+    const rows = sh.getRange(2, 1, last - 1, 5).getValues();
+    for (let i = 0; i < rows.length; i++) {
+      const st = String(rows[i][1]);
+      if (st !== 'pending' && st !== 'hold') continue;
+      const msg = String(rows[i][3]);
+      if (msg.indexOf('【決済報告】') !== 0 || msg.indexOf(no) < 0) continue;   // アラート行には合流しない
+      const ids = JSON.parse(rows[i][4] || '{}');
+      if (add.denpyo && !ids.denpyo)   ids.denpyo  = add.denpyo;
+      if (add.license && !ids.license) ids.license = add.license;
+      if (add.items && add.items.length) ids.items = (ids.items || []).concat(add.items);
+      sh.getRange(i + 2, 5).setValue(JSON.stringify(ids));
+      if (st === 'hold') sh.getRange(i + 2, 2).setValue('pending');
+    }
+  } finally { lock.releaseLock(); }
+}
+
+/** 決済報告＋アラートをキューへ（即時応答のため投稿はしない） */
+function enqueueSlack_(t, nos, fileIds, warnings, waitingImgs) {
+  const props = PropertiesService.getScriptProperties();
+  const mainCh = props.getProperty('SLACK_CHANNEL_ID');
+  const alertCh = props.getProperty('SLACK_ALERT_CHANNEL_ID');
+  if (!mainCh && !alertCh) return;   // Slack未設定なら静かにスキップ
+  const sh = getQueueSheet_();
+  const tj = t.items.reduce((s, it) => s + it.jodai, 0);
+  const tg = t.items.reduce((s, it) => s + it.geShiro, 0);
+  const p = tj - tg;
+  if (mainCh) {
+    const msg = ['【決済報告】' + t.buyer + '（' + t.genba + '） ' + nos.join(','),
+      '【上代】¥' + tj.toLocaleString() + '-', '【下代】¥' + tg.toLocaleString() + '-',
+      '【粗利】' + (p < 0 ? '-¥' + Math.abs(p).toLocaleString() : '¥' + p.toLocaleString()) + '-',
+      '【流入】' + (CHANNEL_TO_NYURYU[t.channel] || t.channel),
+      '【その他】' + (t.biko || ''), '【販促品】' + (t.hansoku || 'なし')].join('\n');
+    // waitingImgs=true: 伝票/身分証の後追い保存を最大3分待つ（mergeQueueFileIds_が合流時にpending化）
+    sh.appendRow([new Date(), waitingImgs ? 'hold' : 'pending', mainCh, msg, JSON.stringify(fileIds || {})]);
+  }
+  if (alertCh && !(t.person && t.person.name)) {
+    sh.appendRow([new Date(), 'pending', alertCh,
+      '【本人確認アラート】' + t.buyer + '（' + t.genba + '） ' + nos.join(',') + '\n本人確認情報なしで転記されました。至急確認してください。', '{}']);
+  }
+  if (alertCh) {
+    const skips = warnings.filter(w => w.indexOf('[伝票スキップ]') === 0);
+    if (skips.length) sh.appendRow([new Date(), 'pending', alertCh, '【伝票書込スキップ】' + nos.join(',') + '\n' + skips.join('\n') + '\n→ 手転記が必要です', '{}']);
+  }
+}
+
+/** 1分毎トリガー: キューを処理して実体添付で投稿 */
+function processSlackQueue() {
+  const token = PropertiesService.getScriptProperties().getProperty('SLACK_BOT_TOKEN');
+  if (!token) return;
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) return;
+  try {
+    const sh = getQueueSheet_();
+    const last = sh.getLastRow();
+    if (last < 2) return;
+    const rows = sh.getRange(2, 1, last - 1, 5).getValues();
+    for (let i = 0; i < rows.length; i++) {
+      const st = String(rows[i][1]);
+      if (st !== 'pending' && st !== 'hold') continue;
+      if (st === 'hold') {   // 伝票/身分証の後追い保存待ち。3分超えたら現状の添付で投稿
+        const age = Date.now() - new Date(rows[i][0]).getTime();
+        if (age < 3 * 60 * 1000) continue;
+      }
+      const r = i + 2;
+      try {
+        const ch = rows[i][2], msg = rows[i][3];
+        const ids = JSON.parse(rows[i][4] || '{}');
+        const all = [ids.denpyo, ids.license].concat(ids.items || []).filter(Boolean);
+        if (all.length) slackUploadFiles_(token, ch, all, msg);   // 実体添付＋本文
+        else slackPostText_(token, ch, msg);
+        sh.getRange(r, 2).setValue('done ' + Utilities.formatDate(new Date(), 'Asia/Tokyo', 'MM/dd HH:mm'));
+      } catch (e) {
+        sh.getRange(r, 2).setValue('error: ' + String(e).slice(0, 80));
+      }
+    }
+  } finally { lock.releaseLock(); }
+}
+
+function slackPostText_(token, channel, text) {
+  const res = UrlFetchApp.fetch('https://slack.com/api/chat.postMessage', {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    headers: { Authorization: 'Bearer ' + token },
+    payload: JSON.stringify({ channel: channel, text: text })
+  });
+  const j = JSON.parse(res.getContentText());
+  if (!j.ok) throw new Error('chat.postMessage: ' + j.error);
+}
+
+/** files.getUploadURLExternal → PUT → completeUploadExternal（本文はinitial_commentで同時投稿） */
+function slackUploadFiles_(token, channel, fileIds, comment) {
+  const uploaded = [];
+  for (const id of fileIds) {
+    const f = DriveApp.getFileById(id);
+    const blob = f.getBlob();
+    const bytes = blob.getBytes();
+    const r1 = JSON.parse(UrlFetchApp.fetch('https://slack.com/api/files.getUploadURLExternal', {
+      method: 'post', muteHttpExceptions: true,
+      headers: { Authorization: 'Bearer ' + token },
+      payload: { filename: f.getName(), length: String(bytes.length) }
+    }).getContentText());
+    if (!r1.ok) throw new Error('getUploadURLExternal: ' + r1.error);
+    UrlFetchApp.fetch(r1.upload_url, { method: 'post', contentType: 'application/octet-stream', payload: bytes, muteHttpExceptions: true });
+    uploaded.push({ id: r1.file_id, title: f.getName() });
+  }
+  const r2 = JSON.parse(UrlFetchApp.fetch('https://slack.com/api/files.completeUploadExternal', {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    headers: { Authorization: 'Bearer ' + token },
+    payload: JSON.stringify({ files: uploaded, channel_id: channel, initial_comment: comment })
+  }).getContentText());
+  if (!r2.ok) throw new Error('completeUploadExternal: ' + r2.error);
+}
+
+/* ==================== 初期設定（1回だけ実行） ==================== */
+/** トリガー3本を作成: Slackキュー処理(1分毎)・一時保管掃除(毎日3時)・保存期間掃除(毎月1日4時) */
+function runSetup() {
+  const names = ['processSlackQueue', 'cleanupTemp', 'cleanupRetention'];
+  ScriptApp.getProjectTriggers().forEach(tr => { if (names.indexOf(tr.getHandlerFunction()) >= 0) ScriptApp.deleteTrigger(tr); });
+  ScriptApp.newTrigger('processSlackQueue').timeBased().everyMinutes(1).create();
+  ScriptApp.newTrigger('cleanupTemp').timeBased().everyDays(1).atHour(3).create();
+  ScriptApp.newTrigger('cleanupRetention').timeBased().onMonthDay(1).atHour(4).create();
+  getFolder_([CONFIG.DRIVE.ROOT, CONFIG.DRIVE.TEMP]);   // フォルダも先に作成
+  Logger.log('runSetup完了: トリガー3本・Driveフォルダを作成しました');
+}
