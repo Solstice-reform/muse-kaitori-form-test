@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MUSE 買取入力 v6.2（本番）</title>
+<title>MUSE 買取入力 v6.4（デバッグ）</title>
 <style>
   :root{
     /* 紙とはんこ: 背景=自社伝票のクリーム紙 / 墨 / 常磐緑(屋号) / 朱肉(警告のみ) */
@@ -179,11 +179,14 @@
 <header class="app">
   <span class="mark"><svg class="ic" viewBox="0 0 24 24" style="width:1.25em;height:1.25em;"><path d="M12 10.5V21M8 21h8"/><path d="M4.5 8.5 19 5l-4.6 5.8z" fill="currentColor" stroke="none"/></svg></span>
   <span class="ttl">買取かざみどり</span>
-  <span class="sub">現場入力 v6.2</span>
+  <span class="sub">デバッグ版・OCR停止中（課金なし）</span>
   <button class="gasdot" id="gasDot" onclick="showGasStatus()" aria-label="GAS接続状態"></button>
 </header>
 
 <div class="wrap">
+  <div class="note ocr" style="margin:14px 0 0;"><span><svg class="ic" viewBox="0 0 24 24" style="margin-top:2px;"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.6v.01"/></svg></span>
+    <div><b>デバッグモード：OCRは課金回避のため停止中です。</b>本人確認・取引・品物にはサンプル値（小松様の実取引）を入力済み。写真を添付して送信すると、<b>転記／Drive保存／Slack実体添付（#決済報告デバッグチャンネル）</b>を無料でテストできます。実顧客情報を含むため社外共有不可。</div>
+  </div>
   <div id="form">
 
     <!-- 工程01 撮る -->
@@ -482,9 +485,12 @@ function collect(){
 }
 function buildPayload(){
   readPersonInputs();
+  // 画像は送信に同梱しない（数MBのPOSTがモバイル回線で失敗する原因になるため）。
+  // 画像を使うのはOCR（mode:'ocr'）だけ。ここでは添付有無のフラグのみ送る。
   return { buyer:val('buyer'), genba:val('genba'), channel:val('channel'),
     taiou:val('taiou'), promo:val('promo'), biko:val('biko'), person:OCR,
-    images:{ denpyo:IMAGES.denpyo, license:IMAGES.license, items:IMAGES.items },
+    imageFlags:{ denpyo:!!IMAGES.denpyo, license:!!IMAGES.license, items:IMAGES.items.length },
+    fileIds:{ denpyo:FILE_IDS.denpyo, license:FILE_IDS.license, items:FILE_IDS.items.filter(Boolean) },
     items:collect() };
 }
 function val(id){return document.getElementById(id).value;}
@@ -539,14 +545,20 @@ function showGasStatus(){ alertModal(_gasStatus.ok?'GAS接続状態: 正常':'GA
 
 // ===== 画像（1280pxに圧縮して保持） =====
 const IMAGES={ denpyo:null, license:null, items:[] };
+const FILE_IDS={ denpyo:null, license:null, items:[] };   // Drive保存済みのfileId（GAS v3.0が返却）
 function pick(kind,cam){ document.getElementById('file_'+kind+'_'+(cam?'cam':'lib')).click(); }
 async function onPick(e,kind){
   const files=[...e.target.files]; if(!files.length) return;
   for(const f of files){
     try{
       const b64=await compressImage(f,1280,0.8);
-      if(kind==='items'){ if(IMAGES.items.length<3) IMAGES.items.push(b64); else alertModal('上限', '商品画像は最大3枚です。'); }
-      else IMAGES[kind]=b64;
+      if(kind==='items'){
+        if(IMAGES.items.length<3){
+          IMAGES.items.push(b64);
+          uploadInBackground_('items', b64);   // 撮影直後に裏でDrive保存（誰も待たない・失敗しても取引は継続）
+        } else alertModal('上限', '商品画像は最大3枚です。');
+      }
+      else { IMAGES[kind]=b64; FILE_IDS[kind]=null; }   // 差し替え時は旧fileIdを破棄（読取/送信時に再保存）
     }catch(err){ alertModal('画像エラー', '画像の読み込みに失敗しました。別の写真でお試しください。'); }
   }
   renderThumbs(kind); e.target.value='';
@@ -578,17 +590,25 @@ function renderThumbs(kind){
   updateOcrBtn();
 }
 function delImg(kind,i){
-  if(kind==='items') IMAGES.items.splice(i,1); else IMAGES[kind]=null;
+  if(kind==='items'){ IMAGES.items.splice(i,1); FILE_IDS.items.splice(i,1); }
+  else { IMAGES[kind]=null; FILE_IDS[kind]=null; }
   renderThumbs(kind);
+}
+// 裏アップロード（fire-and-forget: 失敗しても現場作業を止めない）
+function uploadInBackground_(kind, b64){
+  const idx = kind==='items' ? IMAGES.items.length-1 : null;
+  postToGas({ mode:'upload', images: kind==='items' ? {items:[b64]} : {[kind]:b64} }, 30000)
+    .then(r=>{ if(!r.ok) return;
+      if(kind==='items'){ if(r.fileIds.items&&r.fileIds.items[0]) FILE_IDS.items[idx]=r.fileIds.items[0]; }
+      else if(r.fileIds[kind]) FILE_IDS[kind]=r.fileIds[kind];
+    }).catch(()=>{});
 }
 function updateOcrBtn(){
   const b=document.getElementById('ocrBtn'); if(!b) return;
   const d=!!IMAGES.denpyo, l=!!IMAGES.license;
   b.disabled=!(d||l);
-  b.innerHTML = IC.scan+' '+(d&&l ? '伝票と身分証をまとめて読取（突合チェック付き）'
-                : d ? '伝票のみ読取（身分証は後からでも可）'
-                : l ? '身分証のみ読取'
-                : '画像を添付すると読取できます');
+  b.innerHTML = IC.scan+' 読取（デバッグ中は停止・タップで説明）';
+  b.disabled=false;
 }
 
 // ===== 一括読取（伝票＋身分証を1リクエスト・片方のみ可） =====
@@ -643,11 +663,18 @@ function renderOcrNotes(msgs){
   box.style.display='block';
 }
 async function runOcr(){
+  // ★デバッグ版: OCRは停止（Claude APIを呼ばない＝課金ゼロ）。画像のDrive保存・Slack添付は送信フローで実施される。
+  await alertModal('OCR停止中（デバッグ版）',
+    'デバッグ期間中は課金回避のため読取を行いません。\n各欄にはサンプル値を入力済みです（必要なら手修正して送信）。\n\n※写真の添付はこのままでOK。送信するとDrive保存とSlack添付がテストされます。');
+  return;
   const b=document.getElementById('ocrBtn');
   b.disabled=true; const orig=b.innerHTML; b.innerHTML=IC.spin+' 読取中…（3〜6秒）';
   try{
-    const r = await postToGas({ mode:'ocr', images:{ denpyo:IMAGES.denpyo, license:IMAGES.license } });
-    if(r.ok){ applyOcr(r); }
+    const r = await postToGas({ mode:'ocr', images:{ denpyo:IMAGES.denpyo, license:IMAGES.license } }, 30000);
+    if(r.ok){
+      if(r.fileIds){ if(r.fileIds.denpyo) FILE_IDS.denpyo=r.fileIds.denpyo; if(r.fileIds.license) FILE_IDS.license=r.fileIds.license; }
+      applyOcr(r);
+    }
     else{ alertModal('読取エラー', r.error+'\n手入力で続行できます。'); }
   }catch(err){
     if(err.isConfig){ alertModal('GAS設定エラー', err.message); } else { alertModal('通信エラー', '読取の通信に失敗しました。電波の良い場所で再度お試しください（読取なしでも手入力で送信できます）。'); }
@@ -663,9 +690,9 @@ const _memQueue = [];
 function qLoad(){ try{ return JSON.parse(localStorage.getItem('muse_queue')||'[]'); }catch(e){ return _memQueue.slice(); } }
 function qSave(arr){ try{ localStorage.setItem('muse_queue', JSON.stringify(arr)); }catch(e){ _memQueue.length=0; Array.prototype.push.apply(_memQueue,arr); } }
 
-async function postToGas(payload){
+async function postToGas(payload, timeoutMs){
   const ctl = new AbortController();
-  const timer = setTimeout(()=>ctl.abort(), 15000);   // 15秒で打ち切り（「送信中…」のまま固まるのを防止）
+  const timer = setTimeout(()=>ctl.abort(), timeoutMs||15000);   // 既定15秒。画像を運ぶOCR/保存は30秒
   try{
     const res = await fetch(GAS_URL, {
       method: 'POST',
@@ -680,7 +707,22 @@ async function postToGas(payload){
       const err = new Error('GASの応答が不正です（ログイン画面等が返却）。デプロイ設定「アクセスできるユーザー: 全員」を確認してください');
       err.isConfig = true; throw err;
     }
+  }catch(err){
+    if(err && err.name==='AbortError'){ err.isTimeout=true; }
+    throw err;
   }finally{ clearTimeout(timer); }
+}
+
+// 失敗時の自己診断: 軽量ping(5秒)で「GASに届くか」を切り分ける
+async function quickPing(){
+  const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),5000);
+  try{
+    const res=await fetch(GAS_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},
+      redirect:'follow',signal:ctl.signal,body:JSON.stringify({mode:'ping'})});
+    const j=JSON.parse(await res.text());
+    return !!j.ok;
+  }catch(e){ return false; }
+  finally{ clearTimeout(t); }
 }
 
 let _sending=false;
@@ -704,6 +746,19 @@ async function submitReal(){
     if(r.ok){
       let msg = '管理番号: ' + r.nos.join(', ');
       if(r.warnings && r.warnings.length) msg += '\n\n[注意]\n' + r.warnings.join('\n');
+      // 読取を使わなかった場合など未保存の画像があれば、初期化前に保管（最大8秒・失敗しても取引は完了済み）
+      const pend={};
+      if(IMAGES.denpyo && !FILE_IDS.denpyo) pend.denpyo=IMAGES.denpyo;
+      if(IMAGES.license && !FILE_IDS.license) pend.license=IMAGES.license;
+      const pendItems=IMAGES.items.filter((b,i)=>!FILE_IDS.items[i]);
+      if(pendItems.length) pend.items=pendItems;
+      if(Object.keys(pend).length){
+        btn.textContent='画像を保管中…';
+        try{
+          const up=await Promise.race([ postToGas({mode:'upload', images:pend, assignNo:r.nos[0]}, 30000),
+                                        new Promise(res=>setTimeout(()=>res(null),8000)) ]);
+        }catch(e){}
+      }
       await alertModal('送信完了', msg);
       resetDemo();
     }else{
@@ -716,7 +771,16 @@ async function submitReal(){
       const queue = qLoad();
       queue.push({ savedAt: new Date().toISOString(), payload: p });
       qSave(queue); renderQueueBadge();
-      await alertModal('通信に失敗しました', '入力内容を端末に保存しました（' + queue.length + '件保留中）。\n電波の良い場所で「保留分を再送」を押してください。');
+      // 自己診断: GAS自体に届くかを軽量pingで確認して原因を表示
+      btn.textContent = '原因を診断中…';
+      const reachable = await quickPing();
+      const diag = err.isTimeout
+        ? '原因: 15秒以内に応答がありませんでした（回線が遅い/不安定）'
+        : reachable
+          ? '診断: GASへの疎通は正常です。一時的な通信エラーの可能性が高く、再送すればそのまま通る見込みです'
+          : '診断: GASに到達できません。①電波 ②広告ブロッカー等がgoogle.comへの通信を遮断していないか ③GASのデプロイ設定 を確認してください';
+      await alertModal('通信に失敗しました（' + queue.length + '件保留中）',
+        '入力内容は端末に保存済みです。\n' + diag + '\n\n「保留分を再送」からいつでも送信できます。');
     }
   }finally{
     _sending=false; btn.disabled = false; btn.textContent = '送信する';
@@ -789,7 +853,7 @@ function submitForm(){
   const slack=`【上代】¥${tj.toLocaleString()}-\n【下代】¥${tg.toLocaleString()}-\n【粗利】${(tj-tg)<0?'-¥'+Math.abs(tj-tg).toLocaleString():'¥'+(tj-tg).toLocaleString()}-\n【流入】${nyuryu}\n【その他】${p.biko||''}\n【販促品】${p.promo||'なし'}`;
   html+=`<div class="out"><div class="oh"><span class="n">5</span>Slack 決済報告（Phase 2 参考）</div><div class="slacknote">テキスト＋画像が投稿されます：</div><div class="slackbox">${slack}\n\n添付: 伝票 ／ 身分証 ／ 商品画像（${rows.length<=3?rows.length:'1〜3'}枚）</div></div>`;
 
-  html+=`<div class="out"><div class="oh"><span class="n">{}</span>GASへ送るデータ（フォームのキー）</div><pre class="json">${esc(JSON.stringify({...p, images:{denpyo:p.images.denpyo?'(画像添付あり)':null, license:p.images.license?'(画像添付あり)':null, items:p.images.items.length+'枚'}},null,2))}</pre></div>`;
+  html+=`<div class="out"><div class="oh"><span class="n">{}</span>GASへ送るデータ（フォームのキー）</div><pre class="json">${esc(JSON.stringify(p,null,2))}</pre></div>`;
 
   document.getElementById('outputs').innerHTML=html;
   document.getElementById('form').style.display='none';
@@ -800,11 +864,25 @@ function submitForm(){
 function esc(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function resetDemo(){ location.reload(); }
 
-// 初期表示
+// 初期表示（デバッグ版）: OCRが入れるはずの値をサンプルで事前入力（2026/7/8 湯河原・小松様）
+document.getElementById('buyer').value='藤原慶俊';
+document.getElementById('genba').value='湯河原';
+document.getElementById('channel').value='声掛';
 updateConv();
-addItem();
+document.getElementById('p_name').value='小松豊子';
+document.getElementById('p_zip').value='259-0301';
+document.getElementById('p_banchi').value='4-21-13 貴田荘';
+document.getElementById('p_birth').value='昭和24年10月16日';
+document.getElementById('p_shokugyo').value='主婦';
+document.getElementById('p_method').value='マイナンバーカード';
+document.getElementById('p_num').value='';
+document.getElementById('p_num').placeholder='マイナンバーカードのため空欄（個人番号の記録は法律で禁止）';
+document.getElementById('personSum').innerHTML='<span class="psum-ok">'+IC.check+' 本人確認 サンプル入力済み：小松豊子 様（タップで確認・修正）</span>';
+addItem({genre:"古銭",  iname:"古銭まとめ",           gd:500,  oroshi:"ワタル"});
+addItem({genre:"その他", iname:"イミテーションまとめ", gd:500,  oroshi:"タグ無し"});
+addItem({genre:"その他", iname:"カメオ",               gd:1300, oroshi:"タグ無し"});
 renderQueueBadge();
-checkGas();   // ヘッダーの接続ランプ: 緑=GAS接続OK / 赤=不通（タップで詳細）
+checkGas();
 </script>
 <div class="dlg-bg" id="dlgBg">
   <div class="dlg" role="dialog" aria-modal="true">
