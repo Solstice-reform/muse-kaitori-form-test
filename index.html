@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MUSE 買取入力 v6.13（本番）</title>
+<title>MUSE 買取入力 v6.14（本番）</title>
 <style>
   :root{
     /* 紙とはんこ: 背景=自社伝票のクリーム紙 / 墨 / 常磐緑(屋号) / 朱肉(警告のみ) */
@@ -179,7 +179,7 @@
 <header class="app">
   <span class="mark"><svg class="ic" viewBox="0 0 24 24" style="width:1.25em;height:1.25em;"><path d="M12 10.5V21M8 21h8"/><path d="M4.5 8.5 19 5l-4.6 5.8z" fill="currentColor" stroke="none"/></svg></span>
   <span class="ttl">買取かざみどり</span>
-  <span class="sub">現場入力 v6.13</span>
+  <span class="sub">現場入力 v6.14</span>
   <button class="gasdot" id="gasDot" onclick="showGasStatus()" aria-label="GAS接続状態"></button>
 </header>
 
@@ -359,7 +359,7 @@ const TELECA_DO=["50度数","105度数","その他度数"];
 const KOSEN=["","100円銀貨","1,000円銀貨","50銭　旭竜銀貨","50銭　竜銀貨","50銭　旭日銀貨","50銭　小丸鳳凰銀貨","20銭　旭竜銀貨","20銭　竜銀貨","20銭　旭日銀貨","10銭　旭竜銀貨","10銭　竜銀貨","10銭　旭日銀貨","天保通宝","1円銀貨","1964年ケネディー1/2ドル","1965-1969年ケネディー1/2ドル"];
 const OROSHI=["グランチャ","グランチャ宝石","貴金属","田村敏男","ブランドＫ","チケッティ","ワタル","ウルトラカメラ","エルミタージュ","STYLE","オークション","色石BANK","タグ無し"];
 const GENRE_OROSHI={ "貴金属":"貴金属", "カメラ":"ウルトラカメラ", "金券類":"チケッティ", "古銭":"ワタル" };
-// v6.13: ジャンル別に卸先の選択肢を絞る(未定義ジャンルは全選択肢)
+// v6.14: ジャンル別に卸先の選択肢を絞る(未定義ジャンルは全選択肢)
 const GENRE_OROSHI_LIMIT={
   "バッグ":["グランチャ","STYLE","タグ無し"],
   "小物":["グランチャ","STYLE","ワタル","タグ無し"],
@@ -375,7 +375,7 @@ const LAYOUT={
 };
 const CHANNEL_TO_ROUTE={ "折込":"【折込】新規","ポスティング":"【ポス】新規","声掛":"【キャッチ】新規","紹介":"紹介","看板":"看板","再来":"今週リピーター","その他":"" };
 const CHANNEL_TO_NYURYU={ "折込":"折込","ポスティング":"ポス","声掛":"声掛","紹介":"紹介","看板":"看板","再来":"再来","その他":"その他" };
-// v6.13: キャッチ担当名簿。起動時にGAS(_キャッチ名簿シート)から取得して差し替え。通信不可時はこの内蔵リスト
+// v6.14: キャッチ担当名簿。起動時にGAS(_キャッチ名簿シート)から取得して差し替え。通信不可時はこの内蔵リスト
 let CATCHERS=["堺飛龍","その他"];
 function renderCatchers(){
   const s=document.getElementById('catchName'); if(!s) return;
@@ -388,7 +388,7 @@ function toggleCatch(){
   const on=(c==='声掛'||c==='再来');
   w.style.display = on ? 'block' : 'none';
   const l=document.getElementById('catchNameLbl'); if(l) l.textContent=(c==='再来')?'担当者（リピ）':'キャッチ担当';
-  const tw=document.getElementById('catchTimingWrap'); if(tw) tw.style.display='';   // v6.13: タイミングは声掛・再来とも必要
+  const tw=document.getElementById('catchTimingWrap'); if(tw) tw.style.display='';   // v6.14: タイミングは声掛・再来とも必要
 }
 const PREFIX={ "八嶋真司":"YS","筒井涼介":"TR","藤原慶俊":"FK","袖井貢":"MS","原田峰行":"HT" };
 
@@ -412,14 +412,14 @@ function updateConv(){
 // ===== 品物行 =====
 let seq=0;
 function addItem(preset){
-  preset=preset||{genre:"金券類"};
+  preset=preset||{};
   const id=++seq;
   const w=document.createElement("div");
   w.className="item"; w.dataset.id=id;
   w.innerHTML=`
     <div class="ihead"><span class="ino"></span>
-      <select class="genre" style="max-width:150px" onchange="renderFields(${id})">${opt(GENRES,preset.genre)}</select>
-      <select class="oroshi" style="max-width:150px">${opt(OROSHI,preset.oroshi||"チケッティ")}</select>
+      <select class="genre" style="max-width:150px" onchange="renderFields(${id})"><option value=""${preset.genre?'':' selected'}>ジャンル選択</option>${opt(GENRES,preset.genre||null)}</select>
+      <select class="oroshi" style="max-width:150px"><option value=""${preset.oroshi?'':' selected'}>卸先選択</option>${opt(OROSHI,preset.oroshi||null)}</select>
       <button class="del" onclick="delItem(this)" aria-label="この品物を削除">${IC.close}</button>
     </div>
     <div class="dynfields"></div>
@@ -438,8 +438,9 @@ function addItem(preset){
 function renderFields(id,preset){
   preset=preset||{};
   const w=document.querySelector(`.item[data-id="${id}"]`);
-  const g=w.querySelector(".genre").value, L=LAYOUT[g]||{itemname:true}, box=w.querySelector(".dynfields");
+  const g=w.querySelector(".genre").value, L=g?(LAYOUT[g]||{itemname:true}):{}, box=w.querySelector(".dynfields");
   let h="";
+  if(!g) h=`<div class="sub" style="padding:4px 2px;">ジャンルを選択すると入力欄が表示されます</div>`;
   if(L.brand||L.line){
     h+=`<div class="grid ${L.line?'g2':'g1'}">`;
     if(L.brand) h+=`<div><div class="sub">ブランド</div><select class="brand">${opt(BRANDS,preset.brand||"")}</select></div>`;
@@ -471,14 +472,15 @@ function renderFields(id,preset){
   const yw=w.querySelector(".yosokuwrap");
   yw.innerHTML = L.weight ? `<div style="margin-top:6px;"><div class="sub">予測上代¥（実際価格）</div><input class="yosoku" type="number" inputmode="numeric" value="${preset.yosoku||''}" placeholder="実際価格" oninput="onYosoku(${id})"></div>` : "";
 
-  {// v6.13: ジャンルに応じて卸先の選択肢を再構築(現在値が絞り込み外なら残して選択継続=呼び出しデータ保護)
+  {// v6.14: ジャンルに応じて卸先の選択肢を再構築(現在値が絞り込み外なら残して選択継続=呼び出しデータ保護)
     const os=w.querySelector(".oroshi");
     if(os){
       const cur=os.value;
       let list=(GENRE_OROSHI_LIMIT[g]||OROSHI).slice();
       if(cur && list.indexOf(cur)<0) list.push(cur);
-      const sel=(cur && list.indexOf(cur)>=0)?cur:list[0];
-      os.innerHTML=opt(list, sel);
+      // v6.14: 既定は空（卸先選択）。自動割当ジャンル(GENRE_OROSHI)だけ後段で自動セット
+      const sel=(cur && list.indexOf(cur)>=0)?cur:'';
+      os.innerHTML=`<option value=""${sel?'':' selected'}>卸先選択</option>`+opt(list, sel||null);
     }
   }
   if(GENRE_OROSHI[g]){const os=w.querySelector(".oroshi"); if(os && [].some.call(os.options,o=>o.value===GENRE_OROSHI[g])) os.value=GENRE_OROSHI[g];}
@@ -522,7 +524,7 @@ function collect(){
     return o;
   });
 }
-// ===== v6.13 冪等化: 取引ごとに一意のtxIdを発行(再送しても二重転記されない) =====
+// ===== v6.14 冪等化: 取引ごとに一意のtxIdを発行(再送しても二重転記されない) =====
 function newTxId(){ try{ return crypto.randomUUID(); }catch(e){ return 'tx-'+Date.now()+'-'+Math.random().toString(36).slice(2,10); } }
 let TX_ID = newTxId();     // resetDemo()=location.reload() で自動再発行。保留呼び出し時は元のtxIdを引き継ぐ
 let RECALLED_AT = null;    // 保留から呼び出した取引のsavedAt(送信成功時に保留から自動削除するため)
@@ -680,6 +682,13 @@ function updateOcrBtn(){
 
 // ===== 一括読取（伝票＋身分証を1リクエスト・片方のみ可） =====
 function setIfOcr(id,val){ if(val){ const el=document.getElementById(id); if(el) el.value=val; } }
+// v6.14: 身分証優先。既存値(伝票読取や手入力)と食い違う場合は上書きした上で注意を残す
+function setPrefer(id,v,label,notes){
+  if(!v) return;
+  const el=document.getElementById(id); if(!el) return;
+  if(el.value && el.value!==v) notes.push('【身分証優先】'+label+'を「'+el.value+'」→「'+v+'」に上書きしました。食い違いのため原本を確認してください');
+  el.value=v;
+}
 function applyOcr(r){
   const d=r.ocr.denpyo||{}, l=r.ocr.license||{}, notes=[];
   if(d.detected){
@@ -693,9 +702,9 @@ function applyOcr(r){
     }
   }
   if(l.detected){
-    setIfOcr('p_name',l.name); setIfOcr('p_banchi',l.banchi);
-    setIfOcr('p_birth',l.birth); setIfOcr('p_num',l.num);
-    setIfOcr('p_method',l.type);                      // 証明書種別を自動判定（免許証/マイナンバーカード等）
+    setPrefer('p_name',l.name,'氏名',notes); setPrefer('p_banchi',l.banchi,'番地',notes);
+    setPrefer('p_birth',l.birth,'生年月日',notes); setPrefer('p_num',l.num,'番号',notes);
+    setPrefer('p_method',l.type,'確認の方法',notes);   // 証明書種別を自動判定。身分証の値を常に優先
     document.getElementById('p_addr_note').textContent = l.addr ? `読取住所: ${l.addr} ${l.banchi||''}（都道府県〜町域は台帳側で郵便番号から自動補完）` : '';
     const num=document.getElementById('p_num');
     if(l.type==='マイナンバーカード'){
@@ -703,7 +712,7 @@ function applyOcr(r){
       notes.push('身分証はマイナンバーカードと判定。番号欄は空欄のままにしてください');
     } else { num.placeholder='例：0000 0000 0000'; }
   }
-  // v6.13: 伝票の品物欄→工程04へ半自動投入
+  // v6.14: 伝票の品物欄→工程04へ半自動投入
   if(d.detected && Array.isArray(d.items) && d.items.length){
     const box=document.getElementById('items');
     const cards=[...box.children];
@@ -749,7 +758,7 @@ function renderOcrNotes(msgs){
 }
 async function runOcr(){
   const b=document.getElementById('ocrBtn');
-  b.disabled=true; const orig=b.innerHTML; b.innerHTML=IC.spin+' 読取中…（3〜6秒）';
+  b.disabled=true; const orig=b.innerHTML; b.innerHTML=IC.spin+' 読取中…（10秒ほどかかります）';
   try{
     const r = await postToGas({ mode:'ocr', images:{ denpyo:IMAGES.denpyo, license:IMAGES.license } }, 30000);
     if(r.ok){
@@ -822,6 +831,10 @@ async function submitReal(){
   if(p.channel==='再来' && !(p.catch&&p.catch.name)) miss.push('・担当者（きっかけ=再来のため）');
   if(!p.person.name.trim()) miss.push('・本人確認の氏名');
   if(!p.items.length) miss.push('・品物（1件以上）');
+  p.items.forEach((it,i)=>{
+    if(!it.genre)  miss.push('・品物'+(i+1)+'点目のジャンル');
+    if(!it.oroshi) miss.push('・品物'+(i+1)+'点目の卸先');
+  });
   if(miss.length){ await alertModal('未入力の必須項目があります', miss.join('\n')); return; }
   if(p.items.some(it=>!it.gd)){
     if(!(await confirmModal('確認', '下代（買取額）が0円の品物があります。このまま送信しますか？'))) return;
@@ -864,7 +877,7 @@ async function submitReal(){
       await alertModal('GAS設定エラー', err.message + '\n\n（このエラーは再送しても直りません。保留には入れていません）');
     }else{
       dbg('通信失敗: '+(err.isTimeout?'45秒タイムアウト':(err.message||err)));
-      // v6.13: 通信失敗の種類を問わず「実は転記済みか」を照会。
+      // v6.14: 通信失敗の種類を問わず「実は転記済みか」を照会。
       // タイムアウトだけでなく、iOSのアプリ切替・着信・画面ロックで
       // Safariがfetchを強制切断した場合(TypeError等)も応答だけが失われる。
       if(p.txId){
@@ -922,7 +935,7 @@ async function resendQueue(){
   else if(remain.length) msg+='\n（電波の良い場所で再度お試しください）';
   await alertModal('再送結果', msg);
 }
-// ===== v6.13 保留ビューア: 中身の確認・転記状況の照会・フォームへの呼び出し =====
+// ===== v6.14 保留ビューア: 中身の確認・転記状況の照会・フォームへの呼び出し =====
 let _txStatusCache = {};   // txId → {written, nos, time}
 function escH(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function _qSummary(q, i){
@@ -1000,10 +1013,10 @@ async function deleteFromQueue(i){
 }
 function setV(id,v){const e=document.getElementById(id); if(e) e.value=(v==null?'':v);}
 
-// v6.13 デバッグ出力(本番版はコンソールのみ・画面には出さない)
+// v6.14 デバッグ出力(本番版はコンソールのみ・画面には出さない)
 function dbg(msg){ try{console.log('[MUSE]',msg);}catch(e){} }
 
-// v6.13: アプリ切替・着信から復帰した時、保留の転記状況を自動照会し、
+// v6.14: アプリ切替・着信から復帰した時、保留の転記状況を自動照会し、
 // 転記済みの保留(応答だけ失われた送信)は自動消化する
 let _visChecking=false;
 document.addEventListener('visibilitychange', async ()=>{
@@ -1098,7 +1111,7 @@ function resetDemo(){ location.reload(); }
 updateConv();
 addItem();
 renderCatchers();
-dbg('フォーム v6.13 起動');
+dbg('フォーム v6.14 起動');
 (async function loadRoster(){
   try{
     const r=await postToGas({mode:'roster'},15000);
