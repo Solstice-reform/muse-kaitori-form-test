@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MUSE 買取入力 v6.16（デバッグ）</title>
+<title>MUSE 買取入力 v6.18（デバッグ）</title>
 <style>
   :root{
     /* 紙とはんこ: 背景=自社伝票のクリーム紙 / 墨 / 常磐緑(屋号) / 朱肉(警告のみ) */
@@ -179,7 +179,7 @@
 <header class="app">
   <span class="mark"><svg class="ic" viewBox="0 0 24 24" style="width:1.25em;height:1.25em;"><path d="M12 10.5V21M8 21h8"/><path d="M4.5 8.5 19 5l-4.6 5.8z" fill="currentColor" stroke="none"/></svg></span>
   <span class="ttl">買取かざみどり</span>
-  <span class="sub">デバッグ版 v6.16・OCR検証中（課金あり）</span>
+  <span class="sub">デバッグ版 v6.18・OCR検証中（課金あり）</span>
   <button class="gasdot" id="gasDot" onclick="showGasStatus()" aria-label="GAS接続状態"></button>
 </header>
 
@@ -372,7 +372,7 @@ const TELECA_DO=["50度数","105度数","その他度数"];
 const KOSEN=["","100円銀貨","1,000円銀貨","50銭　旭竜銀貨","50銭　竜銀貨","50銭　旭日銀貨","50銭　小丸鳳凰銀貨","20銭　旭竜銀貨","20銭　竜銀貨","20銭　旭日銀貨","10銭　旭竜銀貨","10銭　竜銀貨","10銭　旭日銀貨","天保通宝","1円銀貨","1964年ケネディー1/2ドル","1965-1969年ケネディー1/2ドル"];
 const OROSHI=["グランチャ","グランチャ宝石","貴金属","田村敏男","ブランドＫ","チケッティ","ワタル","ウルトラカメラ","エルミタージュ","STYLE","オークション","色石BANK","タグ無し"];
 const GENRE_OROSHI={ "貴金属":"貴金属", "カメラ":"ウルトラカメラ", "金券類":"チケッティ", "古銭":"ワタル" };
-// v6.16: ジャンル別に卸先の選択肢を絞る(未定義ジャンルは全選択肢)
+// v6.18: ジャンル別に卸先の選択肢を絞る(未定義ジャンルは全選択肢)
 const GENRE_OROSHI_LIMIT={
   "バッグ":["グランチャ","STYLE","タグ無し"],
   "小物":["グランチャ","STYLE","ワタル","タグ無し"],
@@ -388,7 +388,7 @@ const LAYOUT={
 };
 const CHANNEL_TO_ROUTE={ "折込":"【折込】新規","ポスティング":"【ポス】新規","声掛":"【キャッチ】新規","紹介":"紹介","看板":"看板","再来":"今週リピーター","その他":"" };
 const CHANNEL_TO_NYURYU={ "折込":"折込","ポスティング":"ポス","声掛":"声掛","紹介":"紹介","看板":"看板","再来":"再来","その他":"その他" };
-// v6.16: キャッチ担当名簿。起動時にGAS(_キャッチ名簿シート)から取得して差し替え。通信不可時はこの内蔵リスト
+// v6.18: キャッチ担当名簿。起動時にGAS(_キャッチ名簿シート)から取得して差し替え。通信不可時はこの内蔵リスト
 let CATCHERS=["堺飛龍","その他"];
 function renderCatchers(){
   const s=document.getElementById('catchName'); if(!s) return;
@@ -401,7 +401,7 @@ function toggleCatch(){
   const on=(c==='声掛'||c==='再来');
   w.style.display = on ? 'block' : 'none';
   const l=document.getElementById('catchNameLbl'); if(l) l.textContent=(c==='再来')?'担当者（リピ）':'キャッチ担当';
-  const tw=document.getElementById('catchTimingWrap'); if(tw) tw.style.display='';   // v6.16: タイミングは声掛・再来とも必要
+  const tw=document.getElementById('catchTimingWrap'); if(tw) tw.style.display='';   // v6.18: タイミングは声掛・再来とも必要
 }
 const PREFIX={ "八嶋真司":"YS","筒井涼介":"TR","藤原慶俊":"FK","袖井貢":"MS","原田峰行":"HT" };
 
@@ -485,13 +485,13 @@ function renderFields(id,preset){
   const yw=w.querySelector(".yosokuwrap");
   yw.innerHTML = L.weight ? `<div style="margin-top:6px;"><div class="sub">予測上代¥（実際価格）</div><input class="yosoku" type="number" inputmode="numeric" value="${preset.yosoku||''}" placeholder="実際価格" oninput="onYosoku(${id})"></div>` : "";
 
-  {// v6.16: ジャンルに応じて卸先の選択肢を再構築(現在値が絞り込み外なら残して選択継続=呼び出しデータ保護)
+  {// v6.18: ジャンルに応じて卸先の選択肢を再構築(現在値が絞り込み外なら残して選択継続=呼び出しデータ保護)
     const os=w.querySelector(".oroshi");
     if(os){
       const cur=os.value;
       let list=(GENRE_OROSHI_LIMIT[g]||OROSHI).slice();
       if(cur && list.indexOf(cur)<0) list.push(cur);
-      // v6.16: 既定は空（卸先選択）。自動割当ジャンル(GENRE_OROSHI)だけ後段で自動セット
+      // v6.18: 既定は空（卸先選択）。自動割当ジャンル(GENRE_OROSHI)だけ後段で自動セット
       const sel=(cur && list.indexOf(cur)>=0)?cur:'';
       os.innerHTML=`<option value=""${sel?'':' selected'}>卸先選択</option>`+opt(list, sel||null);
     }
@@ -537,7 +537,7 @@ function collect(){
     return o;
   });
 }
-// ===== v6.16 冪等化: 取引ごとに一意のtxIdを発行(再送しても二重転記されない) =====
+// ===== v6.18 冪等化: 取引ごとに一意のtxIdを発行(再送しても二重転記されない) =====
 function newTxId(){ try{ return crypto.randomUUID(); }catch(e){ return 'tx-'+Date.now()+'-'+Math.random().toString(36).slice(2,10); } }
 let TX_ID = newTxId();     // resetDemo()=location.reload() で自動再発行。保留呼び出し時は元のtxIdを引き継ぐ
 let RECALLED_AT = null;    // 保留から呼び出した取引のsavedAt(送信成功時に保留から自動削除するため)
@@ -631,7 +631,7 @@ async function onPick(e,kind){
   const files=[...e.target.files]; if(!files.length) return;
   for(const f of files){
     try{
-      // v6.16: 伝票・身分証は1568px/高品質（AIの読取上限解像度。番号等の小さな数字の判読性が上がる）。商品は従来1280px
+      // v6.18: 伝票・身分証は1568px/高品質（AIの読取上限解像度。番号等の小さな数字の判読性が上がる）。商品は従来1280px
       const b64=await compressImage(f, kind==='items'?1280:1568, kind==='items'?0.8:0.85);
       if(kind==='items'){
         if(IMAGES.items.length<3){
@@ -694,8 +694,9 @@ function updateOcrBtn(){
 
 // ===== 一括読取（伝票＋身分証を1リクエスト・片方のみ可） =====
 function setIfOcr(id,val){ if(val){ const el=document.getElementById(id); if(el) el.value=val; } }
-// v6.16: 免許証番号の確認必須管理
+// v6.18: 免許証番号の確認必須管理
 let NUM_FROM_OCR=false;   // OCRが番号を入れたらtrue→原本突合チェックが必須になる
+let OCR_COST_TOTAL=0;     // v6.18: このページ表示中のOCR費用累計(円)
 function numMeta(){
   const v=(val('p_num')||'').replace(/[^0-9]/g,'');
   const c=document.getElementById('numCount');
@@ -703,7 +704,7 @@ function numMeta(){
   const w=document.getElementById('numConfirmWrap');
   if(w){ w.style.display = (NUM_FROM_OCR && v) ? 'flex' : 'none'; }
 }
-// v6.16: 身分証優先。既存値(伝票読取や手入力)と食い違う場合は上書きした上で注意を残す
+// v6.18: 身分証優先。既存値(伝票読取や手入力)と食い違う場合は上書きした上で注意を残す
 function setPrefer(id,v,label,notes){
   if(!v) return;
   const el=document.getElementById(id); if(!el) return;
@@ -736,7 +737,7 @@ function applyOcr(r){
       notes.push('身分証はマイナンバーカードと判定。番号欄は空欄のままにしてください');
     } else { num.placeholder='例：0000 0000 0000'; }
   }
-  // v6.16: 伝票の品物欄→工程04へ半自動投入
+  // v6.18: 伝票の品物欄→工程04へ半自動投入
   if(d.detected && Array.isArray(d.items) && d.items.length){
     const box=document.getElementById('items');
     const cards=[...box.children];
@@ -784,10 +785,17 @@ function renderOcrNotes(msgs){
 async function runOcr(){
   // ★OCR検証版: Claude API（Haiku）を実際に呼ぶ。1回あたり概算1円前後の課金が発生
   const b=document.getElementById('ocrBtn');
-  b.disabled=true; const orig=b.innerHTML; b.innerHTML=IC.spin+' 読取中…（10秒ほどかかります）';
+  b.disabled=true; const orig=b.innerHTML; b.innerHTML=IC.spin+' 読取中…（10〜30秒かかります）';
   try{
-    const r = await postToGas({ mode:'ocr', images:{ denpyo:IMAGES.denpyo, license:IMAGES.license } }, 30000);
+    const r = await postToGas({ mode:'ocr', images:{ denpyo:IMAGES.denpyo, license:IMAGES.license } }, 60000);   // v6.18: Sonnet+高解像度で30秒では不足する場合がある
     if(r.ok){
+      if(r.usage){
+        OCR_COST_TOTAL += (r.usage.costJpy||0);
+        dbg('OCR消費: 入力'+(r.usage.inputTokens||0).toLocaleString()+'tok / 出力'+(r.usage.outputTokens||0).toLocaleString()+'tok'
+          +' ≒ 約'+(r.usage.costJpy||0)+'円（$'+(r.usage.costUsd||0)+'）'
+          +' / このページでの累計 約'+(Math.round(OCR_COST_TOTAL*100)/100)+'円'
+          +' ['+(r.usage.model||'')+' / '+(r.usage.rate||150)+'円換算]');
+      }
       if(r.fileIds){ if(r.fileIds.denpyo) FILE_IDS.denpyo=r.fileIds.denpyo; if(r.fileIds.license) FILE_IDS.license=r.fileIds.license; }
       applyOcr(r);
     }
@@ -909,7 +917,7 @@ async function submitReal(){
       await alertModal('GAS設定エラー', err.message + '\n\n（このエラーは再送しても直りません。保留には入れていません）');
     }else{
       dbg('通信失敗: '+(err.isTimeout?'45秒タイムアウト':(err.message||err)));
-      // v6.16: 通信失敗の種類を問わず「実は転記済みか」を照会。
+      // v6.18: 通信失敗の種類を問わず「実は転記済みか」を照会。
       // タイムアウトだけでなく、iOSのアプリ切替・着信・画面ロックで
       // Safariがfetchを強制切断した場合(TypeError等)も応答だけが失われる。
       if(p.txId){
@@ -967,7 +975,7 @@ async function resendQueue(){
   else if(remain.length) msg+='\n（電波の良い場所で再度お試しください）';
   await alertModal('再送結果', msg);
 }
-// ===== v6.16 保留ビューア: 中身の確認・転記状況の照会・フォームへの呼び出し =====
+// ===== v6.18 保留ビューア: 中身の確認・転記状況の照会・フォームへの呼び出し =====
 let _txStatusCache = {};   // txId → {written, nos, time}
 function escH(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function _qSummary(q, i){
@@ -1045,7 +1053,7 @@ async function deleteFromQueue(i){
 }
 function setV(id,v){const e=document.getElementById(id); if(e) e.value=(v==null?'':v);}
 
-// ===== v6.16 画面内デバッグログ(デバッグ版のみ) =====
+// ===== v6.18 画面内デバッグログ(デバッグ版のみ) =====
 const _dbgLines=[];
 function dbg(msg){
   const t=new Date().toTimeString().slice(0,8);
@@ -1055,7 +1063,7 @@ function dbg(msg){
   if(el){ el.textContent=_dbgLines.join('\n'); el.scrollTop=el.scrollHeight; }
 }
 
-// v6.16: アプリ切替・着信から復帰した時、保留の転記状況を自動照会し、
+// v6.18: アプリ切替・着信から復帰した時、保留の転記状況を自動照会し、
 // 転記済みの保留(応答だけ失われた送信)は自動消化する
 let _visChecking=false;
 document.addEventListener('visibilitychange', async ()=>{
@@ -1150,7 +1158,7 @@ function resetDemo(){ location.reload(); }
 updateConv();
 addItem();
 renderCatchers();
-dbg('フォーム v6.16 起動');
+dbg('フォーム v6.18 起動');
 (async function loadRoster(){
   try{
     const r=await postToGas({mode:'roster'},15000);
