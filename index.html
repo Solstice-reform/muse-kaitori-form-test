@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MUSE 買取入力 v6.10（本番）</title>
+<title>MUSE 買取入力 v6.13（本番）</title>
 <style>
   :root{
     /* 紙とはんこ: 背景=自社伝票のクリーム紙 / 墨 / 常磐緑(屋号) / 朱肉(警告のみ) */
@@ -179,7 +179,7 @@
 <header class="app">
   <span class="mark"><svg class="ic" viewBox="0 0 24 24" style="width:1.25em;height:1.25em;"><path d="M12 10.5V21M8 21h8"/><path d="M4.5 8.5 19 5l-4.6 5.8z" fill="currentColor" stroke="none"/></svg></span>
   <span class="ttl">買取かざみどり</span>
-  <span class="sub">現場入力 v6.10</span>
+  <span class="sub">現場入力 v6.13</span>
   <button class="gasdot" id="gasDot" onclick="showGasStatus()" aria-label="GAS接続状態"></button>
 </header>
 
@@ -359,7 +359,7 @@ const TELECA_DO=["50度数","105度数","その他度数"];
 const KOSEN=["","100円銀貨","1,000円銀貨","50銭　旭竜銀貨","50銭　竜銀貨","50銭　旭日銀貨","50銭　小丸鳳凰銀貨","20銭　旭竜銀貨","20銭　竜銀貨","20銭　旭日銀貨","10銭　旭竜銀貨","10銭　竜銀貨","10銭　旭日銀貨","天保通宝","1円銀貨","1964年ケネディー1/2ドル","1965-1969年ケネディー1/2ドル"];
 const OROSHI=["グランチャ","グランチャ宝石","貴金属","田村敏男","ブランドＫ","チケッティ","ワタル","ウルトラカメラ","エルミタージュ","STYLE","オークション","色石BANK","タグ無し"];
 const GENRE_OROSHI={ "貴金属":"貴金属", "カメラ":"ウルトラカメラ", "金券類":"チケッティ", "古銭":"ワタル" };
-// v6.10: ジャンル別に卸先の選択肢を絞る(未定義ジャンルは全選択肢)
+// v6.13: ジャンル別に卸先の選択肢を絞る(未定義ジャンルは全選択肢)
 const GENRE_OROSHI_LIMIT={
   "バッグ":["グランチャ","STYLE","タグ無し"],
   "小物":["グランチャ","STYLE","ワタル","タグ無し"],
@@ -375,7 +375,7 @@ const LAYOUT={
 };
 const CHANNEL_TO_ROUTE={ "折込":"【折込】新規","ポスティング":"【ポス】新規","声掛":"【キャッチ】新規","紹介":"紹介","看板":"看板","再来":"今週リピーター","その他":"" };
 const CHANNEL_TO_NYURYU={ "折込":"折込","ポスティング":"ポス","声掛":"声掛","紹介":"紹介","看板":"看板","再来":"再来","その他":"その他" };
-// v6.10: キャッチ担当名簿。起動時にGAS(_キャッチ名簿シート)から取得して差し替え。通信不可時はこの内蔵リスト
+// v6.13: キャッチ担当名簿。起動時にGAS(_キャッチ名簿シート)から取得して差し替え。通信不可時はこの内蔵リスト
 let CATCHERS=["堺飛龍","その他"];
 function renderCatchers(){
   const s=document.getElementById('catchName'); if(!s) return;
@@ -388,7 +388,7 @@ function toggleCatch(){
   const on=(c==='声掛'||c==='再来');
   w.style.display = on ? 'block' : 'none';
   const l=document.getElementById('catchNameLbl'); if(l) l.textContent=(c==='再来')?'担当者（リピ）':'キャッチ担当';
-  const tw=document.getElementById('catchTimingWrap'); if(tw) tw.style.display='';   // v6.10: タイミングは声掛・再来とも必要
+  const tw=document.getElementById('catchTimingWrap'); if(tw) tw.style.display='';   // v6.13: タイミングは声掛・再来とも必要
 }
 const PREFIX={ "八嶋真司":"YS","筒井涼介":"TR","藤原慶俊":"FK","袖井貢":"MS","原田峰行":"HT" };
 
@@ -471,7 +471,7 @@ function renderFields(id,preset){
   const yw=w.querySelector(".yosokuwrap");
   yw.innerHTML = L.weight ? `<div style="margin-top:6px;"><div class="sub">予測上代¥（実際価格）</div><input class="yosoku" type="number" inputmode="numeric" value="${preset.yosoku||''}" placeholder="実際価格" oninput="onYosoku(${id})"></div>` : "";
 
-  {// v6.10: ジャンルに応じて卸先の選択肢を再構築(現在値が絞り込み外なら残して選択継続=呼び出しデータ保護)
+  {// v6.13: ジャンルに応じて卸先の選択肢を再構築(現在値が絞り込み外なら残して選択継続=呼び出しデータ保護)
     const os=w.querySelector(".oroshi");
     if(os){
       const cur=os.value;
@@ -522,7 +522,7 @@ function collect(){
     return o;
   });
 }
-// ===== v6.10 冪等化: 取引ごとに一意のtxIdを発行(再送しても二重転記されない) =====
+// ===== v6.13 冪等化: 取引ごとに一意のtxIdを発行(再送しても二重転記されない) =====
 function newTxId(){ try{ return crypto.randomUUID(); }catch(e){ return 'tx-'+Date.now()+'-'+Math.random().toString(36).slice(2,10); } }
 let TX_ID = newTxId();     // resetDemo()=location.reload() で自動再発行。保留呼び出し時は元のtxIdを引き継ぐ
 let RECALLED_AT = null;    // 保留から呼び出した取引のsavedAt(送信成功時に保留から自動削除するため)
@@ -703,6 +703,24 @@ function applyOcr(r){
       notes.push('身分証はマイナンバーカードと判定。番号欄は空欄のままにしてください');
     } else { num.placeholder='例：0000 0000 0000'; }
   }
+  // v6.13: 伝票の品物欄→工程04へ半自動投入
+  if(d.detected && Array.isArray(d.items) && d.items.length){
+    const box=document.getElementById('items');
+    const cards=[...box.children];
+    const firstEmpty = cards.length===1 &&
+      !(cards[0].querySelector('.gd')&&Number(cards[0].querySelector('.gd').value)>0) &&
+      !(cards[0].querySelector('.iname')&&cards[0].querySelector('.iname').value);
+    if(firstEmpty) box.innerHTML='';   // 初期の空カード1枚だけなら置き換え。入力済みなら末尾に追記
+    let kinkenNote=[];
+    d.items.forEach(it=>{
+      const pr={genre:it.genre||'その他', qty:it.qty||1, gd:it.gedai||0};
+      if(it.genre==='金券類'){ kinkenNote.push(it.name); } else { pr.iname=it.name; }
+      addItem(pr);
+    });
+    recalc();
+    notes.push('伝票から品物'+d.items.length+'点を読み取り、工程04へ入力しました。ジャンル・上代・卸先・数量を必ず確認してください'+(firstEmpty?'':'（既存入力があったため末尾に追記）'));
+    kinkenNote.forEach(n=>notes.push('金券類「'+n+'」は種別・度数を手選択してください'));
+  }
   if((d.detected||l.detected) && !val('p_zip')) notes.push('郵便番号が読み取れませんでした。手入力してください');
   const mm=document.getElementById('mismatchBox');
   if(r.ocr.match && r.ocr.match.checked && r.ocr.match.same===false){
@@ -819,14 +837,7 @@ async function submitReal(){
     if(r.ok){
       // 呼び出し元の保留・同一txIdの保留を自動削除(残骸防止)
       const q2=qLoad().filter(q=>!((q.payload&&q.payload.txId&&q.payload.txId===p.txId)||(RECALLED_AT&&q.savedAt===RECALLED_AT)));
-      qSave(q2); RECALLED_AT=null; renderCatchers(); renderQueueBadge();
-dbg('フォーム v6.10 起動');
-(async function loadRoster(){
-  try{
-    const r=await postToGas({mode:'roster'},15000);
-    if(r&&r.ok&&r.catchers&&r.catchers.length){ CATCHERS=r.catchers; renderCatchers(); dbg('名簿を取得: '+CATCHERS.length+'名'); }
-  }catch(e){ dbg('名簿取得失敗（内蔵リストで継続）: '+(e.message||e)); }
-})();
+      qSave(q2); RECALLED_AT=null; renderQueueBadge();
       let msg = '管理番号: ' + r.nos.join(', ');
       if(r.warnings && r.warnings.length) msg += '\n\n[注意]\n' + r.warnings.join('\n');
       // 読取を使わなかった場合など未保存の画像があれば、初期化前に保管（最大8秒・失敗しても取引は完了済み）
@@ -853,7 +864,7 @@ dbg('フォーム v6.10 起動');
       await alertModal('GAS設定エラー', err.message + '\n\n（このエラーは再送しても直りません。保留には入れていません）');
     }else{
       dbg('通信失敗: '+(err.isTimeout?'45秒タイムアウト':(err.message||err)));
-      // v6.10: 通信失敗の種類を問わず「実は転記済みか」を照会。
+      // v6.13: 通信失敗の種類を問わず「実は転記済みか」を照会。
       // タイムアウトだけでなく、iOSのアプリ切替・着信・画面ロックで
       // Safariがfetchを強制切断した場合(TypeError等)も応答だけが失われる。
       if(p.txId){
@@ -911,7 +922,7 @@ async function resendQueue(){
   else if(remain.length) msg+='\n（電波の良い場所で再度お試しください）';
   await alertModal('再送結果', msg);
 }
-// ===== v6.10 保留ビューア: 中身の確認・転記状況の照会・フォームへの呼び出し =====
+// ===== v6.13 保留ビューア: 中身の確認・転記状況の照会・フォームへの呼び出し =====
 let _txStatusCache = {};   // txId → {written, nos, time}
 function escH(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function _qSummary(q, i){
@@ -989,10 +1000,10 @@ async function deleteFromQueue(i){
 }
 function setV(id,v){const e=document.getElementById(id); if(e) e.value=(v==null?'':v);}
 
-// v6.10 デバッグ出力(本番版はコンソールのみ・画面には出さない)
+// v6.13 デバッグ出力(本番版はコンソールのみ・画面には出さない)
 function dbg(msg){ try{console.log('[MUSE]',msg);}catch(e){} }
 
-// v6.10: アプリ切替・着信から復帰した時、保留の転記状況を自動照会し、
+// v6.13: アプリ切替・着信から復帰した時、保留の転記状況を自動照会し、
 // 転記済みの保留(応答だけ失われた送信)は自動消化する
 let _visChecking=false;
 document.addEventListener('visibilitychange', async ()=>{
@@ -1086,6 +1097,14 @@ function resetDemo(){ location.reload(); }
 // 初期表示
 updateConv();
 addItem();
+renderCatchers();
+dbg('フォーム v6.13 起動');
+(async function loadRoster(){
+  try{
+    const r=await postToGas({mode:'roster'},15000);
+    if(r&&r.ok&&r.catchers&&r.catchers.length){ CATCHERS=r.catchers; renderCatchers(); dbg('名簿を取得: '+CATCHERS.length+'名'); }
+  }catch(e){ dbg('名簿取得失敗（内蔵リストで継続）: '+(e.message||e)); }
+})();
 renderQueueBadge();
 checkGas();   // ヘッダーの接続ランプ: 緑=GAS接続OK / 赤=不通（タップで詳細）
 </script>
