@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MUSE 買取入力 v6.19（デバッグ）</title>
+<title>MUSE 買取入力 v6.22（デバッグ）</title>
 <style>
   :root{
     /* 紙とはんこ: 背景=自社伝票のクリーム紙 / 墨 / 常磐緑(屋号) / 朱肉(警告のみ) */
@@ -179,7 +179,8 @@
 <header class="app">
   <span class="mark"><svg class="ic" viewBox="0 0 24 24" style="width:1.25em;height:1.25em;"><path d="M12 10.5V21M8 21h8"/><path d="M4.5 8.5 19 5l-4.6 5.8z" fill="currentColor" stroke="none"/></svg></span>
   <span class="ttl">買取かざみどり</span>
-  <span class="sub">デバッグ版 v6.19・OCR検証中（課金あり）</span>
+  <button id="toolsBtn" onclick="openTools()" style="background:none;border:none;color:#F3EFE7;padding:6px;margin-left:6px;position:relative;order:99;"><svg class="ic" viewBox="0 0 24 24" style="width:21px;height:21px;"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span id="toolsBadge" style="display:none;position:absolute;top:0;right:0;background:#B5483C;color:#fff;border-radius:9px;min-width:16px;height:16px;font-size:10px;line-height:16px;text-align:center;padding:0 3px;"></span></button>
+<span class="sub">デバッグ版 v6.22・OCR検証中（課金あり）</span>
   <button class="gasdot" id="gasDot" onclick="showGasStatus()" aria-label="GAS接続状態"></button>
 </header>
 
@@ -290,7 +291,7 @@
           <div style="grid-column:1/-1;font-size:11.5px;" id="numMetaRow">
             <span id="numCount" style="color:var(--ink2);"></span>
             <label id="numConfirmWrap" style="display:none;margin-top:4px;align-items:flex-start;gap:6px;">
-              <input type="checkbox" id="numConfirm" style="width:18px;height:18px;margin-top:1px;">
+              <input type="checkbox" id="numConfirm" style="appearance:auto;-webkit-appearance:checkbox;width:22px;height:22px;min-width:22px;padding:0;margin:1px 0 0 0;accent-color:var(--ink);flex:0 0 auto;border:1.5px solid var(--rule);border-radius:4px;">
               <span><b>免許証番号を原本と1桁ずつ突合し、一致を確認した</b>（OCR読取値のため確認必須）</span></label>
           </div>
           <div style="grid-column:1/-1;font-size:11px;color:var(--ink2);" id="p_addr_note"></div>
@@ -339,13 +340,16 @@
   </div>
   <button class="go" onclick="submitReal()">送信する</button>
 </div>
+<div id="legacyTools" style="display:none;">
 <button class="resendln" id="resendBtn" onclick="resendQueue()"><svg class="ic" viewBox="0 0 24 24"><path d="M5 9a10 10 0 0 1 14 0M8 12.5a6 6 0 0 1 8 0"/><circle cx="12" cy="17" r="1.4"/><path d="M12 18.4V21"/></svg> 圏外時の保留分を再送する<span class="qbadge" id="qbadge" style="display:none;"></span></button>
 <button class="resendln" id="queueViewBtn" onclick="openQueueViewer()" style="display:none;"><svg class="ic" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg> 保留の中身を見る・呼び出す</button>
+<button class="resendln" id="correctBtn" onclick="openCorrect()"><svg class="ic" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg> 送信済みの金額訂正</button>
 <button class="resendln" id="discardBtn" onclick="discardQueue()" style="display:none;"><svg class="ic" viewBox="0 0 24 24"><path d="M5 7h14M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 7M7 7l1 13h8l1-13M10 11v6M14 11v6"/></svg> 保留分を破棄する</button>
 <details style="margin-top:10px;font-size:11px;color:var(--ink2);">
   <summary style="cursor:pointer;">デバッグログ（送信の内部動作・GASトレース）</summary>
   <pre id="dbgLog" style="max-height:180px;overflow:auto;background:rgba(0,0,0,.05);border-radius:8px;padding:8px;white-space:pre-wrap;word-break:break-all;margin-top:6px;"></pre>
 </details>
+</div>
 </div>
 
 <script>
@@ -372,7 +376,7 @@ const TELECA_DO=["50度数","105度数","その他度数"];
 const KOSEN=["","100円銀貨","1,000円銀貨","50銭　旭竜銀貨","50銭　竜銀貨","50銭　旭日銀貨","50銭　小丸鳳凰銀貨","20銭　旭竜銀貨","20銭　竜銀貨","20銭　旭日銀貨","10銭　旭竜銀貨","10銭　竜銀貨","10銭　旭日銀貨","天保通宝","1円銀貨","1964年ケネディー1/2ドル","1965-1969年ケネディー1/2ドル"];
 const OROSHI=["グランチャ","グランチャ宝石","貴金属","田村敏男","ブランドＫ","チケッティ","ワタル","ウルトラカメラ","エルミタージュ","STYLE","オークション","色石BANK","タグ無し"];
 const GENRE_OROSHI={ "貴金属":"貴金属", "カメラ":"ウルトラカメラ", "金券類":"チケッティ", "古銭":"ワタル" };
-// v6.19: ジャンル別に卸先の選択肢を絞る(未定義ジャンルは全選択肢)
+// v6.22: ジャンル別に卸先の選択肢を絞る(未定義ジャンルは全選択肢)
 const GENRE_OROSHI_LIMIT={
   "バッグ":["グランチャ","STYLE","タグ無し"],
   "小物":["グランチャ","STYLE","ワタル","タグ無し"],
@@ -388,7 +392,7 @@ const LAYOUT={
 };
 const CHANNEL_TO_ROUTE={ "折込":"【折込】新規","ポスティング":"【ポス】新規","声掛":"【キャッチ】新規","紹介":"紹介","看板":"看板","再来":"今週リピーター","その他":"" };
 const CHANNEL_TO_NYURYU={ "折込":"折込","ポスティング":"ポス","声掛":"声掛","紹介":"紹介","看板":"看板","再来":"再来","その他":"その他" };
-// v6.19: キャッチ担当名簿。起動時にGAS(_キャッチ名簿シート)から取得して差し替え。通信不可時はこの内蔵リスト
+// v6.22: キャッチ担当名簿。起動時にGAS(_キャッチ名簿シート)から取得して差し替え。通信不可時はこの内蔵リスト
 let CATCHERS=["堺飛龍","その他"];
 function renderCatchers(){
   const s=document.getElementById('catchName'); if(!s) return;
@@ -401,7 +405,7 @@ function toggleCatch(){
   const on=(c==='声掛'||c==='再来');
   w.style.display = on ? 'block' : 'none';
   const l=document.getElementById('catchNameLbl'); if(l) l.textContent=(c==='再来')?'担当者（リピ）':'キャッチ担当';
-  const tw=document.getElementById('catchTimingWrap'); if(tw) tw.style.display='';   // v6.19: タイミングは声掛・再来とも必要
+  const tw=document.getElementById('catchTimingWrap'); if(tw) tw.style.display='';   // v6.22: タイミングは声掛・再来とも必要
 }
 const PREFIX={ "八嶋真司":"YS","筒井涼介":"TR","藤原慶俊":"FK","袖井貢":"MS","原田峰行":"HT" };
 
@@ -485,13 +489,13 @@ function renderFields(id,preset){
   const yw=w.querySelector(".yosokuwrap");
   yw.innerHTML = L.weight ? `<div style="margin-top:6px;"><div class="sub">予測上代¥（実際価格）</div><input class="yosoku" type="number" inputmode="numeric" value="${preset.yosoku||''}" placeholder="実際価格" oninput="onYosoku(${id})"></div>` : "";
 
-  {// v6.19: ジャンルに応じて卸先の選択肢を再構築(現在値が絞り込み外なら残して選択継続=呼び出しデータ保護)
+  {// v6.22: ジャンルに応じて卸先の選択肢を再構築(現在値が絞り込み外なら残して選択継続=呼び出しデータ保護)
     const os=w.querySelector(".oroshi");
     if(os){
       const cur=os.value;
       let list=(GENRE_OROSHI_LIMIT[g]||OROSHI).slice();
       if(cur && list.indexOf(cur)<0) list.push(cur);
-      // v6.19: 既定は空（卸先選択）。自動割当ジャンル(GENRE_OROSHI)だけ後段で自動セット
+      // v6.22: 既定は空（卸先選択）。自動割当ジャンル(GENRE_OROSHI)だけ後段で自動セット
       const sel=(cur && list.indexOf(cur)>=0)?cur:'';
       os.innerHTML=`<option value=""${sel?'':' selected'}>卸先選択</option>`+opt(list, sel||null);
     }
@@ -537,7 +541,7 @@ function collect(){
     return o;
   });
 }
-// ===== v6.19 冪等化: 取引ごとに一意のtxIdを発行(再送しても二重転記されない) =====
+// ===== v6.22 冪等化: 取引ごとに一意のtxIdを発行(再送しても二重転記されない) =====
 function newTxId(){ try{ return crypto.randomUUID(); }catch(e){ return 'tx-'+Date.now()+'-'+Math.random().toString(36).slice(2,10); } }
 let TX_ID = newTxId();     // resetDemo()=location.reload() で自動再発行。保留呼び出し時は元のtxIdを引き継ぐ
 let RECALLED_AT = null;    // 保留から呼び出した取引のsavedAt(送信成功時に保留から自動削除するため)
@@ -631,7 +635,7 @@ async function onPick(e,kind){
   const files=[...e.target.files]; if(!files.length) return;
   for(const f of files){
     try{
-      // v6.19: 伝票・身分証は1568px/高品質（AIの読取上限解像度。番号等の小さな数字の判読性が上がる）。商品は従来1280px
+      // v6.22: 伝票・身分証は1568px/高品質（AIの読取上限解像度。番号等の小さな数字の判読性が上がる）。商品は従来1280px
       const b64=await compressImage(f, kind==='items'?1280:1568, kind==='items'?0.8:0.85);
       if(kind==='items'){
         if(IMAGES.items.length<3){
@@ -694,9 +698,9 @@ function updateOcrBtn(){
 
 // ===== 一括読取（伝票＋身分証を1リクエスト・片方のみ可） =====
 function setIfOcr(id,val){ if(val){ const el=document.getElementById(id); if(el) el.value=val; } }
-// v6.19: 免許証番号の確認必須管理
+// v6.22: 免許証番号の確認必須管理
 let NUM_FROM_OCR=false;   // OCRが番号を入れたらtrue→原本突合チェックが必須になる
-let OCR_COST_TOTAL=0;     // v6.19: このページ表示中のOCR費用累計(円)
+let OCR_COST_TOTAL=0;     // v6.22: このページ表示中のOCR費用累計(円)
 function numMeta(){
   const v=(val('p_num')||'').replace(/[^0-9]/g,'');
   const c=document.getElementById('numCount');
@@ -704,7 +708,7 @@ function numMeta(){
   const w=document.getElementById('numConfirmWrap');
   if(w){ w.style.display = (NUM_FROM_OCR && v) ? 'flex' : 'none'; }
 }
-// v6.19: 身分証優先。既存値(伝票読取や手入力)と食い違う場合は上書きした上で注意を残す
+// v6.22: 身分証優先。既存値(伝票読取や手入力)と食い違う場合は上書きした上で注意を残す
 function setPrefer(id,v,label,notes){
   if(!v) return;
   const el=document.getElementById(id); if(!el) return;
@@ -737,7 +741,7 @@ function applyOcr(r){
       notes.push('身分証はマイナンバーカードと判定。番号欄は空欄のままにしてください');
     } else { num.placeholder='例：0000 0000 0000'; }
   }
-  // v6.19: 伝票の品物欄→工程04へ半自動投入
+  // v6.22: 伝票の品物欄→工程04へ半自動投入
   if(d.detected && Array.isArray(d.items) && d.items.length){
     const box=document.getElementById('items');
     const cards=[...box.children];
@@ -787,7 +791,7 @@ async function runOcr(){
   const b=document.getElementById('ocrBtn');
   b.disabled=true; const orig=b.innerHTML; b.innerHTML=IC.spin+' 読取中…（10〜30秒かかります）';
   try{
-    const r = await postToGas({ mode:'ocr', images:{ denpyo:IMAGES.denpyo, license:IMAGES.license } }, 60000);   // v6.19: Sonnet+高解像度で30秒では不足する場合がある
+    const r = await postToGas({ mode:'ocr', images:{ denpyo:IMAGES.denpyo, license:IMAGES.license } }, 60000);   // v6.22: Sonnet+高解像度で30秒では不足する場合がある
     if(r.ok){
       if(r.usage){
         OCR_COST_TOTAL += (r.usage.costJpy||0);
@@ -883,7 +887,7 @@ async function submitReal(){
   try{
     dbg('送信開始 txId='+p.txId.slice(0,8)+'… 品物'+p.items.length+'点');
     const _t0=Date.now();
-    // v6.19: GASが処理を続ける限り待ち切る設計。
+    // v6.22: GASが処理を続ける限り待ち切る設計。
     //  ・本命fetchは上限120秒（回線死亡の検出線としてのみ機能）
     //  ・経過秒数をボタンに表示（固まって見えない）
     //  ・40秒経過後は15秒おきに転記状況を裏で照会し、書込完了が確認できた瞬間に
@@ -911,6 +915,13 @@ async function submitReal(){
     if(r.trace) dbg('GASトレース: '+r.trace.join(' → '));
     if(!r.ok && r.failedStep) dbg('失敗工程: '+r.failedStep);
     if(r.ok){
+      // v6.22: 直近送信スナップショット（金額訂正用・最新5件）
+      try{
+        const rec=JSON.parse(localStorage.getItem('muse_recent')||'[]');
+        rec.unshift({ at:new Date().toISOString(), buyer:p.buyer, genba:p.genba, nos:(r.nos||[]),
+          items:p.items.map((it,i)=>({no:(r.nos||[])[i]||'', genre:it.genre, name:it.iname||it.detail||it.genre, qty:it.qty, jd:+it.jd||0, gd:+it.gd||0})) });
+        localStorage.setItem('muse_recent', JSON.stringify(rec.slice(0,5)));
+      }catch(e){}
       // 呼び出し元の保留・同一txIdの保留を自動削除(残骸防止)
       const q2=qLoad().filter(q=>!((q.payload&&q.payload.txId&&q.payload.txId===p.txId)||(RECALLED_AT&&q.savedAt===RECALLED_AT)));
       qSave(q2); RECALLED_AT=null; renderQueueBadge();
@@ -940,7 +951,7 @@ async function submitReal(){
       await alertModal('GAS設定エラー', err.message + '\n\n（このエラーは再送しても直りません。保留には入れていません）');
     }else{
       dbg('通信失敗: '+(err.isTimeout?'45秒タイムアウト':(err.message||err)));
-      // v6.19: 通信失敗の種類を問わず「実は転記済みか」を照会。
+      // v6.22: 通信失敗の種類を問わず「実は転記済みか」を照会。
       // タイムアウトだけでなく、iOSのアプリ切替・着信・画面ロックで
       // Safariがfetchを強制切断した場合(TypeError等)も応答だけが失われる。
       if(p.txId){
@@ -998,7 +1009,7 @@ async function resendQueue(){
   else if(remain.length) msg+='\n（電波の良い場所で再度お試しください）';
   await alertModal('再送結果', msg);
 }
-// ===== v6.19 保留ビューア: 中身の確認・転記状況の照会・フォームへの呼び出し =====
+// ===== v6.22 保留ビューア: 中身の確認・転記状況の照会・フォームへの呼び出し =====
 let _txStatusCache = {};   // txId → {written, nos, time}
 function escH(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function _qSummary(q, i){
@@ -1076,7 +1087,7 @@ async function deleteFromQueue(i){
 }
 function setV(id,v){const e=document.getElementById(id); if(e) e.value=(v==null?'':v);}
 
-// ===== v6.19 画面内デバッグログ(デバッグ版のみ) =====
+// ===== v6.22 画面内デバッグログ(デバッグ版のみ) =====
 const _dbgLines=[];
 function dbg(msg){
   const t=new Date().toTimeString().slice(0,8);
@@ -1086,7 +1097,7 @@ function dbg(msg){
   if(el){ el.textContent=_dbgLines.join('\n'); el.scrollTop=el.scrollHeight; }
 }
 
-// v6.19: アプリ切替・着信から復帰した時、保留の転記状況を自動照会し、
+// v6.22: アプリ切替・着信から復帰した時、保留の転記状況を自動照会し、
 // 転記済みの保留(応答だけ失われた送信)は自動消化する
 let _visChecking=false;
 document.addEventListener('visibilitychange', async ()=>{
@@ -1110,6 +1121,90 @@ document.addEventListener('visibilitychange', async ()=>{
   finally{ _visChecking=false; }
 });
 
+// ===== v6.22 金額訂正モード =====
+let CORRECT_SEL=null;
+function openCorrect(){
+  let rec=[]; try{ rec=JSON.parse(localStorage.getItem('muse_recent')||'[]'); }catch(e){}
+  if(!rec.length){ alertModal('訂正できる送信がありません','この端末からの直近送信（最新5件）が訂正の対象です。\n対象がここに無い過去分の訂正は、帳簿の手修正＋Slackスレッドへの訂正返信で対応してください。'); return; }
+  const html=rec.map((s,i)=>{
+    const gd=s.items.reduce((a,it)=>a+(it.gd||0),0);
+    return '<div style="border:1px solid var(--rule,#ccc);border-radius:8px;padding:8px;margin-bottom:8px;font-size:12.5px;">'
+      +'<b>'+escH((s.nos||[]).join(','))+'</b>（'+escH(s.buyer||'')+'・'+escH(s.genba||'')+'）'
+      +' '+s.items.length+'点 下代¥'+gd.toLocaleString()+'<br>送信: '+escH((s.at||'').replace('T',' ').slice(5,16))
+      +'<br><button class="sec" style="font-size:12px;padding:5px 10px;margin-top:4px;" onclick="editCorrect('+i+')">この取引を訂正する</button></div>';
+  }).join('');
+  _dlgHtml('金額訂正（上代・下代・品名のみ）', html, [{label:'閉じる', value:'x'}]);
+}
+function editCorrect(i){
+  const bg=document.getElementById('dlgBg'); bg.classList.remove('show'); _dlgResolve=null;
+  let rec=[]; try{ rec=JSON.parse(localStorage.getItem('muse_recent')||'[]'); }catch(e){}
+  const s=rec[i]; if(!s) return;
+  CORRECT_SEL=s;
+  const html='<div style="font-size:12px;color:var(--ink2);margin-bottom:8px;">金額・品名を修正して「訂正を送信」。帳簿の該当行を上書きし、Slackの旧投稿は削除→訂正版を再投稿します。<b>点数・ジャンルの変更はここではできません</b>（帳簿手修正）。</div>'
+    + s.items.map((it,j)=>'<div style="border:1px solid var(--rule,#ccc);border-radius:8px;padding:8px;margin-bottom:6px;font-size:12.5px;">'
+      +'<b>'+escH(it.no||('（'+(j+1)+'点目）'))+'</b> '+escH(it.genre||'')+'<br>'
+      +'<label style="font-size:11px;">品名<input id="cn_'+j+'" value="'+escH(it.name||'')+'" style="font-size:14px;padding:7px;"></label>'
+      +'<div style="display:flex;gap:6px;margin-top:4px;">'
+      +'<label style="flex:1;font-size:11px;">上代<input id="cj_'+j+'" inputmode="numeric" value="'+(it.jd||0)+'" style="font-size:14px;padding:7px;"></label>'
+      +'<label style="flex:1;font-size:11px;">下代<input id="cg_'+j+'" inputmode="numeric" value="'+(it.gd||0)+'" style="font-size:14px;padding:7px;"></label>'
+      +'</div></div>').join('');
+  _dlgHtml('訂正: '+escH((s.nos||[]).join(',')), html,
+    [{label:'訂正を送信', value:'go'},{label:'やめる', value:'x', sec:true}]).then(async v=>{
+      if(v!=='go') return;
+      await submitCorrect();
+  });
+}
+async function submitCorrect(){
+  const s=CORRECT_SEL; if(!s) return;
+  const cors=[];
+  s.items.forEach((it,j)=>{
+    const nj=+((document.getElementById('cj_'+j)||{}).value||0)||0;
+    const ng=+((document.getElementById('cg_'+j)||{}).value||0)||0;
+    const nn=((document.getElementById('cn_'+j)||{}).value||'').trim();
+    if(!it.no) return;
+    if(nj!==(it.jd||0)||ng!==(it.gd||0)||nn!==(it.name||'')) cors.push({no:it.no, jodai:nj, gedai:ng, itemName:(nn!==(it.name||'')?nn:'')});
+  });
+  if(!cors.length){ await alertModal('変更なし','値が変更されていません。'); return; }
+  if(!(await confirmModal('訂正の確認', cors.length+'件の品物を訂正します。\n帳簿の該当行を上書きし、Slackの旧投稿を削除して訂正版を再投稿します。よろしいですか？'))) return;
+  dbg('訂正送信: '+cors.map(c=>c.no).join(','));
+  try{
+    const r=await postToGas({mode:'correct', corrections:cors}, 60000);
+    if(r.ok){
+      // スナップショット側も更新
+      try{
+        const rec=JSON.parse(localStorage.getItem('muse_recent')||'[]');
+        rec.forEach(sn=>sn.items.forEach(it=>{const c=cors.find(x=>x.no===it.no); if(c){it.jd=c.jodai; it.gd=c.gedai; if(c.itemName)it.name=c.itemName;}}));
+        localStorage.setItem('muse_recent', JSON.stringify(rec));
+      }catch(e){}
+      dbg('訂正完了: 台帳'+r.updated.kobutsu+'行/商品'+r.updated.shohin+'行/伝票'+(r.updated.denpyo?'済':'要手修正')+'/分析'+r.updated.analytics+'行');
+      await alertModal('訂正完了',
+        '・古物台帳: '+r.updated.kobutsu+'行 / 商品登録: '+r.updated.shohin+'行 / 買取伝票: '+(r.updated.denpyo?'更新済み':'手修正が必要')+' / 分析: '+r.updated.analytics+'行\n'
+        +'・Slack: '+(r.slack||'')+'\n'
+        +((r.warnings&&r.warnings.length)?('\n[注意]\n'+r.warnings.join('\n')):''));
+    } else {
+      await alertModal('訂正エラー', r.error||'不明なエラー');
+    }
+  }catch(e){ await alertModal('訂正の通信に失敗', (e.message||e)+'\n帳簿が更新されたか不明です。_DebugLogを確認してください。'); }
+}
+
+// ===== v6.22 ツールメニュー(下部リンク群をヘッダーへ集約) =====
+function openTools(){
+  const n=qLoad().length;
+  const html='<button class="sec" style="width:100%;text-align:left;font-size:13px;" onclick="_tool(resendQueue)">圏外時の保留分を再送する'+(n?('　<b style=\'color:var(--shu,#B5483C);\'>'+n+'件</b>'):'（0件）')+'</button>'
+    +'<button class="sec" style="width:100%;text-align:left;margin-top:6px;font-size:13px;" onclick="_tool(openQueueViewer)">保留の中身を見る・呼び出す</button>'
+    +'<button class="sec" style="width:100%;text-align:left;margin-top:6px;font-size:13px;" onclick="_tool(discardQueue)">保留分を破棄する</button>'
+    +'<button class="sec" style="width:100%;text-align:left;margin-top:6px;font-size:13px;" onclick="_tool(openCorrect)">送信済みの金額訂正</button>'
+    +'<button class="sec" style="width:100%;text-align:left;margin-top:6px;font-size:13px;" onclick="showDbgDlg()">デバッグログを見る</button>' ;
+  _dlgHtml('ツール', html, [{label:'閉じる', value:'x'}]);
+}
+function _tool(fn){ const bg=document.getElementById('dlgBg'); bg.classList.remove('show'); _dlgResolve=null; setTimeout(()=>fn(),80); }
+function showDbgDlg(){
+  const bg=document.getElementById('dlgBg'); bg.classList.remove('show'); _dlgResolve=null;
+  setTimeout(()=>{ _dlgHtml('デバッグログ',
+    '<pre style="max-height:50vh;overflow:auto;background:rgba(0,0,0,.05);border-radius:8px;padding:8px;white-space:pre-wrap;word-break:break-all;font-size:10.5px;">'+escH(_dbgLines.join('\n')||'(まだログはありません)')+'</pre>',
+    [{label:'閉じる', value:'x'}]); },80);
+}
+
 async function discardQueue(){
   const n=qLoad().length;
   if(!n){ await alertModal('保留なし','破棄する保留はありません。'); return; }
@@ -1121,6 +1216,7 @@ function renderQueueBadge(){
   const n_=qLoad().length;
   const d=document.getElementById('discardBtn'); if(d) d.style.display = n_ ? 'block' : 'none';
   const qv=document.getElementById('queueViewBtn'); if(qv) qv.style.display = n_ ? 'block' : 'none';
+  const tb=document.getElementById('toolsBadge'); if(tb){ tb.style.display = n_? 'block':'none'; tb.textContent = n_; }
   const el=document.getElementById('qbadge'); if(!el) return;
   const n=qLoad().length;
   el.style.display = n? 'inline-flex':'none';
@@ -1181,7 +1277,7 @@ function resetDemo(){ location.reload(); }
 updateConv();
 addItem();
 renderCatchers();
-dbg('フォーム v6.19 起動');
+dbg('フォーム v6.22 起動');
 (async function loadRoster(){
   try{
     const r=await postToGas({mode:'roster'},15000);
