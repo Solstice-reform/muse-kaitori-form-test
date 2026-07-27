@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MUSE 買取入力 v6.26（デバッグ）</title>
+<title>MUSE 買取入力 v6.27（デバッグ）</title>
 <style>
   :root{
     /* 紙とはんこ: 背景=自社伝票のクリーム紙 / 墨 / 常磐緑(屋号) / 朱肉(警告のみ) */
@@ -180,7 +180,7 @@
   <span class="mark"><svg class="ic" viewBox="0 0 24 24" style="width:1.25em;height:1.25em;"><path d="M12 10.5V21M8 21h8"/><path d="M4.5 8.5 19 5l-4.6 5.8z" fill="currentColor" stroke="none"/></svg></span>
   <span class="ttl">買取かざみどり</span>
   <button id="toolsBtn" onclick="openTools()" style="background:none;border:none;color:#F3EFE7;padding:6px;margin-left:6px;position:relative;order:99;"><svg class="ic" viewBox="0 0 24 24" style="width:21px;height:21px;"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span id="toolsBadge" style="display:none;position:absolute;top:0;right:0;background:#B5483C;color:#fff;border-radius:9px;min-width:16px;height:16px;font-size:10px;line-height:16px;text-align:center;padding:0 3px;"></span></button>
-<span class="sub">デバッグ版 v6.26・OCR検証中（課金あり）</span>
+<span class="sub">デバッグ版 v6.27・OCR検証中（課金あり）</span>
   <button class="gasdot" id="gasDot" onclick="showGasStatus()" aria-label="GAS接続状態"></button>
 </header>
 
@@ -271,6 +271,13 @@
           <div id="timingHint" style="font-size:11px;color:var(--ink2);margin-top:3px;"></div>
           <label class="field" style="margin-top:6px;"><span class="lbl">見込み種別<span class="opt">タイミングとは別軸</span></span>
             <select id="catchKind"><option value="" selected>選択してください</option><option>金見込み</option><option>金かも見込み</option><option>その他見込み</option></select></label>
+        </div>
+        <div id="prevWrap" style="display:none;grid-column:1/-1;">
+          <label class="field"><span class="lbl">前回流入<span class="opt">お客様に確認</span></span>
+            <select id="prevSource">
+              <option value="" selected>選択してください</option>
+              <option>チラシ</option><option>キャッチ</option><option>紹介</option><option>リピ</option><option>過去開催</option><option>不明</option>
+            </select></label>
         </div>
         <label class="field"><span class="lbl">対応方法<span class="opt">必ず確認</span></span>
           <select id="taiou">
@@ -431,6 +438,8 @@ function toggleCatch(){
   w.style.display = on ? 'block' : 'none';
   const l=document.getElementById('catchNameLbl'); if(l) l.textContent=(c==='再来')?'担当者（リピ）':'キャッチ担当';
   const tw=document.getElementById('catchTimingWrap'); if(tw) tw.style.display='';   // v6.25: タイミングは声掛・再来とも必要
+  // v6.27: 前回流入（きっかけ=再来・紹介のとき表示・必須）
+  const pw=document.getElementById('prevWrap'); if(pw) pw.style.display=(c==='再来'||c==='紹介')?'block':'none';
   timingHint();
 }
 const PREFIX={ "八嶋真司":"YS","筒井涼介":"TR","藤原慶俊":"FK","袖井貢":"MS","原田峰行":"HT" };
@@ -617,7 +626,8 @@ function buildPayload(){
   const _ch=val('channel');
   const catchInfo = ((_ch==='声掛'||_ch==='再来') && val('catchName'))
     ? { name:val('catchName'), timing:val('catchTiming')||'当日', kind:val('catchKind')||'' } : null;
-  return { txId:TX_ID, catch:catchInfo, buyer:val('buyer'), satei:val('satei'), genba:val('genba'), channel:val('channel'),
+  const prevSrc=(_ch==='再来'||_ch==='紹介')?val('prevSource'):'';
+  return { txId:TX_ID, catch:catchInfo, prev:prevSrc, buyer:val('buyer'), satei:val('satei'), genba:val('genba'), channel:val('channel'),
     taiou:val('taiou'), promo:val('promo'), biko:val('biko'), person:OCR,
     imageFlags:{ denpyo:!!IMAGES.denpyo, license:!!IMAGES.license, items:IMAGES.items.length },
     fileIds:{ denpyo:FILE_IDS.denpyo, license:FILE_IDS.license, items:FILE_IDS.items.filter(Boolean) },
@@ -932,6 +942,7 @@ async function submitReal(){
   if(!p.channel) miss.push('・きっかけ');
   if(p.channel==='声掛' && !(p.catch&&p.catch.name)) miss.push('・キャッチ担当（きっかけ=声掛のため）');
   if(p.channel==='再来' && !(p.catch&&p.catch.name)) miss.push('・担当者（きっかけ=再来のため）');
+  if((p.channel==='再来'||p.channel==='紹介') && !p.prev) miss.push('・前回流入（きっかけ='+p.channel+'のため）');
   if((p.channel==='声掛'||p.channel==='再来') && p.catch && !p.catch.kind) miss.push('・見込み種別（金見込み/金かも見込み/その他見込み）');
   if(!p.person.name.trim()) miss.push('・本人確認の氏名');
   if(p.person.method==='免許証'){
@@ -1144,7 +1155,7 @@ async function recallFromQueue(i){
   }
   TX_ID = p.txId || newTxId();
   RECALLED_AT = q.savedAt || null;
-  setV('buyer',p.buyer); setV('satei',p.satei||p.buyer||''); if(p.satei)SATEI_TOUCHED=true; setV('genba',p.genba); setV('channel',p.channel); if(typeof updateConv==='function')updateConv();
+  setV('buyer',p.buyer); setV('satei',p.satei||p.buyer||''); if(p.satei)SATEI_TOUCHED=true; setV('genba',p.genba); setV('channel',p.channel); if(typeof updateConv==='function')updateConv(); setV('prevSource',p.prev||'');
   if(p.catch&&p.catch.name){ if(CATCHERS.indexOf(p.catch.name)<0){CATCHERS.push(p.catch.name);} renderCatchers(); setV('catchName',p.catch.name); setV('catchTiming',p.catch.timing||'当日'); setV('catchKind',p.catch.kind||''); }
   setV('taiou',p.taiou); setV('promo',p.promo); setV('biko',p.biko);
   const per=p.person||{};
@@ -1364,7 +1375,7 @@ function resetDemo(){ location.reload(); }
 updateConv();
 addItem();
 renderCatchers();
-dbg('フォーム v6.26 起動');
+dbg('フォーム v6.27 起動');
 (async function loadRoster(){
   try{
     const r=await postToGas({mode:'roster'},15000);
